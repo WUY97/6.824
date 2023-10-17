@@ -8,8 +8,13 @@ import (
 	"net/http"
 	"net/rpc"
 	"os"
+	"path/filepath"
 	"sync"
+	"time"
 )
+
+const TempDir = "tmp"
+const TaskTimeout = 10
 
 type TaskStatus int
 
@@ -37,6 +42,7 @@ type Task struct {
 	Type      string
 	File      string
 	Partition int
+	StartTime time.Time
 }
 
 type Coordinator struct {
@@ -55,8 +61,15 @@ func (c *Coordinator) AskTask(args *AskTaskArgs, reply *AskTaskReply) error {
 	reply.NReduce = c.nReduce
 
 	for i, task := range c.tasks {
+		if task.Status == InProgress && time.Since(task.StartTime) > TaskTimeout*time.Second {
+			c.tasks[i].Status = NotStarted
+		}
+	}
+
+	for i, task := range c.tasks {
 		if task.Type == MapTask && task.Status == NotStarted {
 			c.tasks[i].Status = InProgress
+			c.tasks[i].StartTime = time.Now()
 			reply.TaskID = i
 			reply.Task = &c.tasks[i]
 			return nil
@@ -67,6 +80,7 @@ func (c *Coordinator) AskTask(args *AskTaskArgs, reply *AskTaskReply) error {
 		for i, task := range c.tasks {
 			if task.Type == ReduceTask && task.Status == NotStarted {
 				c.tasks[i].Status = InProgress
+				c.tasks[i].StartTime = time.Now()
 				reply.TaskID = i
 				reply.Task = &c.tasks[i]
 
@@ -195,5 +209,23 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	}
 
 	c.server()
+
+	outFiles, _ := filepath.Glob("mr-out*")
+	for _, f := range outFiles {
+		if err := os.Remove(f); err != nil {
+			log.Fatalf("Cannot remove file %v\n", f)
+		}
+	}
+
+	err := os.RemoveAll(TempDir)
+	if err != nil {
+		log.Printf("Failed to remove temp directory %s", TempDir)
+	}
+
+	err = os.Mkdir(TempDir, 0755)
+	if err != nil {
+		log.Printf("Failed to create temp directory %s", TempDir)
+	}
+
 	return &c
 }

@@ -75,7 +75,7 @@ func Worker(mapf func(string, string) []KeyValue,
 			}
 
 			for i, kvs := range intermediateFiles {
-				filename := fmt.Sprintf("mr-%d-%d", reply.TaskID, i)
+				filename := fmt.Sprintf("%v/mr-%d-%d", TempDir, reply.TaskID, i)
 				file, err := os.Create(filename)
 				if err != nil {
 					log.Printf("Failed to create file %s", filename)
@@ -106,7 +106,7 @@ func Worker(mapf func(string, string) []KeyValue,
 			// Read intermediate files
 			intermediateKVs := []KeyValue{}
 			for i := 0; i < len(reply.Files); i++ {
-				filename := fmt.Sprintf("mr-%d-%d", i, reply.Task.Partition)
+				filename := fmt.Sprintf("%v/mr-%d-%d", TempDir, i, reply.Task.Partition)
 				file, err := os.Open(filename)
 				if err != nil {
 					log.Printf("Failed to open file %s", filename)
@@ -130,10 +130,10 @@ func Worker(mapf func(string, string) []KeyValue,
 			sort.Sort(ByKey(intermediateKVs))
 
 			// Call reducef for each unique key
-			oname := fmt.Sprintf("mr-out-%d", reply.Task.Partition)
-			ofile, err := os.Create(oname)
+			filePath := fmt.Sprintf("%v/mr-out-%d", TempDir, reply.Task.Partition)
+			ofile, err := os.Create(filePath)
 			if err != nil {
-				log.Printf("Failed to create file %s", oname)
+				log.Printf("Failed to create file %s", filePath)
 				status = Failed
 			} else {
 				i := 0
@@ -155,6 +155,12 @@ func Worker(mapf func(string, string) []KeyValue,
 					i = j
 				}
 				ofile.Close()
+				newPath := fmt.Sprintf("mr-out-%d", reply.Task.Partition)
+				err := os.Rename(filePath, newPath)
+				if err != nil {
+					log.Printf("Failed to rename file %s to %s", filePath, newPath)
+					status = Failed
+				}
 				if status != Failed {
 					status = Completed
 				}
@@ -173,17 +179,7 @@ func Worker(mapf func(string, string) []KeyValue,
 		reportReply := ReportTaskReply{}
 
 		ok = call("Coordinator.ReportTask", &reportArgs, &reportReply)
-		if ok && reportReply.Success {
-			if reply.Task.Type == ReduceTask {
-				for i := 0; i < len(reply.Files); i++ {
-					filename := fmt.Sprintf("mr-%d-%d", i, reply.Task.Partition)
-					err := os.Remove(filename)
-					if err != nil {
-						log.Printf("Failed to delete file %s", filename)
-					}
-				}
-			}
-		} else {
+		if !ok || !reportReply.Success {
 			log.Printf("Failed to report task %d as completed. Error: %s", reply.TaskID, reportReply.Err)
 			time.Sleep(1 * time.Second)
 			continue
