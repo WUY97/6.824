@@ -20,12 +20,14 @@ package raft
 import (
 	//	"bytes"
 
+	"bytes"
 	"math/rand"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	//	"6.824/labgob"
+	"6.824/labgob"
 	"6.824/labrpc"
 )
 
@@ -188,6 +190,7 @@ func (rf *Raft) convertToCandidate(fromState NodeState) {
 	rf.currentTerm++
 	rf.votedFor = rf.me
 	rf.voteCount = 1
+	rf.persist()
 
 	rf.broadcastRequestVote()
 }
@@ -233,6 +236,7 @@ func (rf *Raft) resetChannels() {
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+	defer rf.persist()
 
 	if args.Term < rf.currentTerm {
 		reply.Term = rf.currentTerm
@@ -313,6 +317,7 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+	defer rf.persist()
 
 	if rf.state != Leader || args.Term != rf.currentTerm || reply.Term != rf.currentTerm {
 		return
@@ -398,6 +403,13 @@ func (rf *Raft) persist() {
 	// e.Encode(rf.yyy)
 	// data := w.Bytes()
 	// rf.persister.SaveRaftState(data)
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	if e.Encode(rf.currentTerm) != nil || e.Encode(rf.votedFor) != nil || e.Encode(rf.log) != nil {
+		panic("failed to encode raft persistent state")
+	}
+	data := w.Bytes()
+	rf.persister.SaveRaftState(data)
 }
 
 // restore previously persisted state.
@@ -418,6 +430,11 @@ func (rf *Raft) readPersist(data []byte) {
 	//   rf.xxx = xxx
 	//   rf.yyy = yyy
 	// }
+	r := bytes.NewBuffer(data)
+	d := labgob.NewDecoder(r)
+	if d.Decode(&rf.currentTerm) != nil || d.Decode(&rf.votedFor) != nil || d.Decode(&rf.log) != nil {
+		panic("failed to decode raft persistent state")
+	}
 }
 
 // A service wants to switch to snapshot.  Only do so if Raft hasn't
@@ -461,6 +478,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+	defer rf.persist()
 
 	if args.Term < rf.currentTerm {
 		reply.Term = rf.currentTerm
@@ -522,6 +540,7 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 
 	if reply.Term > rf.currentTerm {
 		rf.convertToFollower(args.Term)
+		rf.persist()
 		return ok
 	}
 
@@ -556,7 +575,8 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	}
 
 	term := rf.currentTerm
-	rf.log = append(rf.log, LogEntry{Term: rf.currentTerm, Command: command})
+	rf.log = append(rf.log, LogEntry{Term: term, Command: command})
+	rf.persist()
 
 	return rf.getLastIndex(), term, true
 }
