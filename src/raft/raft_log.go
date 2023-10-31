@@ -25,39 +25,55 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	reply.ConflictIndex = -1
 	reply.ConflictTerm = -1
 
-	if args.PrevLogIndex > rf.lastIncludedIndex {
-		reply.NeedSnapshot = true
-		return
-	}
+	// if args.PrevLogIndex > rf.lastIncludedIndex {
+	// 	reply.NeedSnapshot = true
+	// 	return
+	// }
 
 	if args.PrevLogIndex > lastIndex {
 		reply.ConflictIndex = lastIndex + 1
 		return
 	}
 
-	baseIndex := rf.lastIncludedIndex + 1
+	// baseIndex := rf.lastIncludedIndex + 1
 
-	if args.PrevLogIndex-baseIndex < 0 || args.PrevLogIndex-baseIndex >= len(rf.log) {
-		reply.Success = false
-		return
-	}
+	// if args.PrevLogIndex-baseIndex < 0 || args.PrevLogIndex-baseIndex >= len(rf.log) {
+	// 	reply.Success = false
+	// 	return
+	// }
 
-	if conflictTerm := rf.log[args.PrevLogIndex-baseIndex].Term; conflictTerm != args.PrevLogTerm {
+	// if conflictTerm := rf.log[args.PrevLogIndex-baseIndex].Term; conflictTerm != args.PrevLogTerm {
+	// 	reply.ConflictTerm = conflictTerm
+	// 	for i := args.PrevLogIndex - 1; i >= baseIndex && rf.log[i-baseIndex].Term == conflictTerm; i-- {
+	// 		reply.ConflictIndex = i
+	// 	}
+	// 	reply.Success = false
+	// 	return
+	// }
+
+	if conflictTerm := rf.log[args.PrevLogIndex].Term; conflictTerm != args.PrevLogTerm {
 		reply.ConflictTerm = conflictTerm
-		for i := args.PrevLogIndex - 1; i >= baseIndex && rf.log[i-baseIndex].Term == conflictTerm; i-- {
+		for i := args.PrevLogIndex; i >= 0 && rf.log[i].Term == conflictTerm; i-- {
 			reply.ConflictIndex = i
 		}
 		reply.Success = false
 		return
 	}
 
+	// i, j := args.PrevLogIndex+1, 0
+	// for ; i < lastIndex+1 && j < len(args.Entries); i, j = i+1, j+1 {
+	// 	if rf.log[i-baseIndex].Term != args.Entries[j].Term {
+	// 		break
+	// 	}
+	// }
+	// rf.log = rf.log[:i-baseIndex]
 	i, j := args.PrevLogIndex+1, 0
 	for ; i < lastIndex+1 && j < len(args.Entries); i, j = i+1, j+1 {
-		if rf.log[i-baseIndex].Term != args.Entries[j].Term {
+		if rf.log[i].Term != args.Entries[j].Term {
 			break
 		}
 	}
-	rf.log = rf.log[:i-baseIndex]
+	rf.log = rf.log[:i]
 	args.Entries = args.Entries[j:]
 	rf.log = append(rf.log, args.Entries...)
 

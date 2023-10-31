@@ -1,5 +1,58 @@
 package raft
 
+func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapshotReply) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	defer rf.persist()
+
+	reply.Term = rf.currentTerm
+
+	if args.Term < rf.currentTerm {
+		reply.Term = rf.currentTerm
+		return
+	}
+
+	if args.Term > rf.currentTerm {
+		rf.convertToFollower(args.Term)
+	}
+
+	if !rf.CondInstallSnapshot(args.LastIncludedTerm, args.LastIncludedIndex, args.Data) {
+		return
+	}
+
+	if rf.lastApplied < rf.lastIncludedIndex {
+		rf.lastApplied = rf.lastIncludedIndex
+		rf.commitIndex = rf.lastIncludedIndex
+	}
+
+	offset := rf.lastIncludedIndex - rf.getLastIndex() + len(rf.log)
+
+	if offset >= 0 && offset < len(rf.log) {
+		rf.log = rf.log[offset:]
+	} else if offset >= len(rf.log) {
+		rf.log = []LogEntry{}
+	}
+}
+
+func (rf *Raft) sendSnapshot(server int, args *InstallSnapshotArgs, reply *InstallSnapshotReply) {
+	ok := rf.peers[server].Call("Raft.InstallSnapshot", args, reply)
+
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	if !ok || rf.state != Leader || args.Term != rf.currentTerm {
+		return
+	}
+
+	if reply.Term > rf.currentTerm {
+		rf.convertToFollower(args.Term)
+		return
+	}
+
+	rf.nextIndex[server] = args.LastIncludedIndex + 1
+	rf.matchIndex[server] = args.LastIncludedIndex
+}
+
 // A service wants to switch to snapshot.  Only do so if Raft hasn't
 // have more recent info since it communicate the snapshot on applyCh.
 func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int, snapshot []byte) bool {
@@ -69,57 +122,4 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	rf.lastIncludedIndex = index
 	// rf.persist()
 	rf.persister.SaveStateAndSnapshot(rf.persister.ReadRaftState(), snapshot)
-}
-
-func (rf *Raft) sendSnapshot(server int, args *InstallSnapshotArgs, reply *InstallSnapshotReply) {
-	ok := rf.peers[server].Call("Raft.InstallSnapshot", args, reply)
-
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-
-	if !ok || rf.state != Leader || args.Term != rf.currentTerm {
-		return
-	}
-
-	if reply.Term > rf.currentTerm {
-		rf.convertToFollower(args.Term)
-		return
-	}
-
-	rf.nextIndex[server] = args.LastIncludedIndex + 1
-	rf.matchIndex[server] = args.LastIncludedIndex
-}
-
-func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapshotReply) {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-	defer rf.persist()
-
-	reply.Term = rf.currentTerm
-
-	if args.Term < rf.currentTerm {
-		reply.Term = rf.currentTerm
-		return
-	}
-
-	if args.Term > rf.currentTerm {
-		rf.convertToFollower(args.Term)
-	}
-
-	if !rf.CondInstallSnapshot(args.LastIncludedTerm, args.LastIncludedIndex, args.Data) {
-		return
-	}
-
-	if rf.lastApplied < rf.lastIncludedIndex {
-		rf.lastApplied = rf.lastIncludedIndex
-		rf.commitIndex = rf.lastIncludedIndex
-	}
-
-	offset := rf.lastIncludedIndex - rf.getLastIndex() + len(rf.log)
-
-	if offset >= 0 && offset < len(rf.log) {
-		rf.log = rf.log[offset:]
-	} else if offset >= len(rf.log) {
-		rf.log = []LogEntry{}
-	}
 }
