@@ -58,7 +58,7 @@ type Raft struct {
 	applyCh     chan ApplyMsg
 
 	// For 2D:
-	snapshotCh        chan bool
+	offset            int
 	lastIncludedIndex int
 	lastIncludedTerm  int
 }

@@ -3,7 +3,6 @@ package raft
 func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapshotReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	defer rf.persist()
 
 	reply.Term = rf.currentTerm
 
@@ -12,44 +11,30 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 	}
 
 	if args.Term > rf.currentTerm {
+		rf.currentTerm = args.Term
+		rf.persist()
 		rf.convertToFollower(args.Term)
 	}
 
-	if !rf.CondInstallSnapshot(args.LastIncludedTerm, args.LastIncludedIndex, args.Data) {
+	if rf.lastIncludedIndex >= args.LastIncludedIndex {
 		return
 	}
 
-	if rf.lastApplied < rf.lastIncludedIndex {
-		rf.lastApplied = rf.lastIncludedIndex
-		rf.commitIndex = rf.lastIncludedIndex
+	message := ApplyMsg{
+		CommandValid:  false,
+		Snapshot:      args.Data,
+		SnapshotTerm:  args.LastIncludedTerm,
+		SnapshotIndex: args.LastIncludedIndex,
+		SnapshotValid: true,
 	}
 
-	offset := rf.lastIncludedIndex - rf.getLastIndex() + len(rf.log)
+	rf.applyCh <- message
 
-	if offset >= 0 && offset < len(rf.log) {
-		rf.log = rf.log[offset:]
-	} else if offset >= len(rf.log) {
-		rf.log = []LogEntry{}
-	}
-}
+	rf.lastIncludedIndex = args.LastIncludedIndex
+	rf.lastIncludedTerm = args.LastIncludedTerm
+	rf.offset = args.LastIncludedIndex + 1
 
-func (rf *Raft) sendSnapshot(server int, args *InstallSnapshotArgs, reply *InstallSnapshotReply) {
-	ok := rf.peers[server].Call("Raft.InstallSnapshot", args, reply)
-
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-
-	if !ok || rf.state != Leader || args.Term != rf.currentTerm {
-		return
-	}
-
-	if reply.Term > rf.currentTerm {
-		rf.convertToFollower(args.Term)
-		return
-	}
-
-	rf.nextIndex[server] = args.LastIncludedIndex + 1
-	rf.matchIndex[server] = args.LastIncludedIndex
+	rf.persist()
 }
 
 // A service wants to switch to snapshot.  Only do so if Raft hasn't
@@ -57,32 +42,16 @@ func (rf *Raft) sendSnapshot(server int, args *InstallSnapshotArgs, reply *Insta
 func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int, snapshot []byte) bool {
 
 	// Your code here (2D).
-	if rf.lastIncludedTerm > lastIncludedTerm || rf.lastIncludedIndex > lastIncludedIndex {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	if lastIncludedIndex <= rf.lastIncludedIndex {
 		return false
 	}
 
+	rf.trimLog(lastIncludedIndex)
+
 	rf.persister.SaveStateAndSnapshot(rf.persister.ReadRaftState(), snapshot)
-	rf.lastIncludedTerm = lastIncludedTerm
-	rf.lastIncludedIndex = lastIncludedIndex
-
-	// discard old log entries
-	newEntries := []LogEntry{}
-	for i := len(rf.log) - 1; i >= 0; i-- {
-		if rf.log[i].Term == lastIncludedTerm && i <= lastIncludedIndex {
-			newEntries = rf.log[i+1:]
-			break
-		}
-	}
-
-	rf.log = newEntries
-
-	if rf.lastApplied < rf.lastIncludedIndex {
-		rf.lastApplied = rf.lastIncludedIndex
-	}
-
-	if rf.commitIndex < rf.lastIncludedIndex {
-		rf.commitIndex = rf.lastIncludedIndex
-	}
 
 	return true
 }
@@ -100,32 +69,27 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 		return
 	}
 
-	newEntries := []LogEntry{}
-	var lastIncludedTerm int
-	if len(rf.log) > 0 {
-		for i, entry := range rf.log {
-			if i > index-rf.lastIncludedIndex {
-				newEntries = append(newEntries, entry)
-				if i == index-rf.lastIncludedIndex {
-					lastIncludedTerm = entry.Term
-				}
-			}
-		}
-	}
+	rf.trimLog(index)
 
-	rf.log = newEntries
-	rf.lastIncludedTerm = lastIncludedTerm
-	rf.lastIncludedIndex = index
-	rf.adjustNextIndex()
-	rf.persist()
 	rf.persister.SaveStateAndSnapshot(rf.persister.ReadRaftState(), snapshot)
-
 }
 
-func (rf *Raft) adjustNextIndex() {
-	for i := range rf.nextIndex {
-		if rf.nextIndex[i] <= rf.lastIncludedIndex {
-			rf.nextIndex[i] = rf.lastIncludedIndex + 1
-		}
+func (rf *Raft) trimLog(index int) {
+	sliceIndex := index - rf.offset
+
+	if sliceIndex < 0 {
+		rf.log = []LogEntry{}
+		return
 	}
+
+	if sliceIndex >= len(rf.log) {
+		return
+	}
+
+	rf.lastIncludedIndex = index
+	rf.lastIncludedTerm = rf.log[sliceIndex].Term
+	rf.offset = index + 1
+	rf.log = rf.log[sliceIndex+1:]
+
+	rf.persist()
 }
