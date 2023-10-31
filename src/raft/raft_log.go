@@ -25,31 +25,10 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	reply.ConflictIndex = -1
 	reply.ConflictTerm = -1
 
-	// if args.PrevLogIndex > rf.lastIncludedIndex {
-	// 	reply.NeedSnapshot = true
-	// 	return
-	// }
-
 	if args.PrevLogIndex > lastIndex {
 		reply.ConflictIndex = lastIndex + 1
 		return
 	}
-
-	// baseIndex := rf.lastIncludedIndex + 1
-
-	// if args.PrevLogIndex-baseIndex < 0 || args.PrevLogIndex-baseIndex >= len(rf.log) {
-	// 	reply.Success = false
-	// 	return
-	// }
-
-	// if conflictTerm := rf.log[args.PrevLogIndex-baseIndex].Term; conflictTerm != args.PrevLogTerm {
-	// 	reply.ConflictTerm = conflictTerm
-	// 	for i := args.PrevLogIndex - 1; i >= baseIndex && rf.log[i-baseIndex].Term == conflictTerm; i-- {
-	// 		reply.ConflictIndex = i
-	// 	}
-	// 	reply.Success = false
-	// 	return
-	// }
 
 	if conflictTerm := rf.log[args.PrevLogIndex].Term; conflictTerm != args.PrevLogTerm {
 		reply.ConflictTerm = conflictTerm
@@ -60,13 +39,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		return
 	}
 
-	// i, j := args.PrevLogIndex+1, 0
-	// for ; i < lastIndex+1 && j < len(args.Entries); i, j = i+1, j+1 {
-	// 	if rf.log[i-baseIndex].Term != args.Entries[j].Term {
-	// 		break
-	// 	}
-	// }
-	// rf.log = rf.log[:i-baseIndex]
 	i, j := args.PrevLogIndex+1, 0
 	for ; i < lastIndex+1 && j < len(args.Entries); i, j = i+1, j+1 {
 		if rf.log[i].Term != args.Entries[j].Term {
@@ -120,19 +92,6 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 
 	if reply.Term > rf.currentTerm {
 		rf.convertToFollower(args.Term)
-		return
-	}
-
-	if reply.NeedSnapshot {
-		snapshot := &InstallSnapshotArgs{
-			Term:              rf.currentTerm,
-			LeaderId:          rf.me,
-			LastIncludedIndex: rf.lastIncludedIndex,
-			LastIncludedTerm:  rf.lastIncludedTerm,
-			Data:              rf.persister.ReadSnapshot(),
-		}
-		snapshotReply := &InstallSnapshotReply{}
-		go rf.sendSnapshot(server, snapshot, snapshotReply)
 		return
 	}
 

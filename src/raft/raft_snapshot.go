@@ -8,7 +8,6 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 	reply.Term = rf.currentTerm
 
 	if args.Term < rf.currentTerm {
-		reply.Term = rf.currentTerm
 		return
 	}
 
@@ -58,9 +57,6 @@ func (rf *Raft) sendSnapshot(server int, args *InstallSnapshotArgs, reply *Insta
 func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int, snapshot []byte) bool {
 
 	// Your code here (2D).
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-
 	if rf.lastIncludedTerm > lastIncludedTerm || rf.lastIncludedIndex > lastIncludedIndex {
 		return false
 	}
@@ -105,21 +101,31 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	}
 
 	newEntries := []LogEntry{}
+	var lastIncludedTerm int
 	if len(rf.log) > 0 {
 		for i, entry := range rf.log {
 			if i > index-rf.lastIncludedIndex {
 				newEntries = append(newEntries, entry)
+				if i == index-rf.lastIncludedIndex {
+					lastIncludedTerm = entry.Term
+				}
 			}
 		}
 	}
 
 	rf.log = newEntries
-	if len(rf.log) > 0 {
-		rf.lastIncludedTerm = rf.log[0].Term
-	} else {
-		rf.lastIncludedTerm = -1
-	}
+	rf.lastIncludedTerm = lastIncludedTerm
 	rf.lastIncludedIndex = index
-	// rf.persist()
+	rf.adjustNextIndex()
+	rf.persist()
 	rf.persister.SaveStateAndSnapshot(rf.persister.ReadRaftState(), snapshot)
+
+}
+
+func (rf *Raft) adjustNextIndex() {
+	for i := range rf.nextIndex {
+		if rf.nextIndex[i] <= rf.lastIncludedIndex {
+			rf.nextIndex[i] = rf.lastIncludedIndex + 1
+		}
+	}
 }
