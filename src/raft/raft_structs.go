@@ -42,11 +42,11 @@ type Raft struct {
 	votedFor    int
 	log         []LogEntry
 
-	commitIndex int
-	lastApplied int
+	commitIndex int // the absolute index of highest log entry known to be committed
+	lastApplied int // the absolute index of highest log entry applied to state machine
 
-	nextIndex  []int
-	matchIndex []int
+	nextIndex  []int // for each server, index of the next log entry to send to that server
+	matchIndex []int // for each server, index of highest log entry known to be replicated on server
 
 	state     NodeState
 	voteCount int
@@ -58,8 +58,7 @@ type Raft struct {
 	applyCh     chan ApplyMsg
 
 	// For 2D:
-	offset            int
-	lastIncludedIndex int
+	lastIncludedIndex int // the absolute index of the last included entry in the snapshot
 	lastIncludedTerm  int
 }
 
@@ -83,7 +82,7 @@ type RequestVoteArgs struct {
 	Term         int
 	CandidateId  int
 	LastLogTerm  int
-	LastLogIndex int
+	LastLogIndex int // index of last log entry
 }
 
 // example RequestVote RPC reply structure.
@@ -97,7 +96,7 @@ type RequestVoteReply struct {
 type AppendEntriesArgs struct {
 	Term         int
 	LeaderId     int
-	PrevLogIndex int
+	PrevLogIndex int // index of log entry immediately preceding new ones
 	PrevLogTerm  int
 	Entries      []LogEntry
 	LeaderCommit int

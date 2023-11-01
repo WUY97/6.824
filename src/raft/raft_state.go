@@ -30,7 +30,7 @@ func (rf *Raft) convertToLeader() {
 	rf.state = Leader
 	rf.nextIndex = make([]int, len(rf.peers))
 	rf.matchIndex = make([]int, len(rf.peers))
-	lastIndex := rf.getLastIndex()
+	lastIndex := rf.getAbsoluteLastIndex()
 	for i := range rf.peers {
 		rf.nextIndex[i] = lastIndex + 1
 	}

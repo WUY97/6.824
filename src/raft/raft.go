@@ -57,7 +57,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	rf.log = append(rf.log, LogEntry{Term: term, Command: command})
 	rf.persist()
 
-	return rf.getLastIndex(), term, true
+	return rf.getAbsoluteLastIndex(), term, true
 }
 
 // the tester doesn't halt goroutines created by Raft after each test,
@@ -149,6 +149,9 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.commitIndex = 0
 	rf.lastApplied = 0
 	rf.applyCh = applyCh
+
+	rf.lastIncludedIndex = 0
+	rf.lastIncludedTerm = 0
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())

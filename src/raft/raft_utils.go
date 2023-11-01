@@ -5,17 +5,29 @@ import (
 	"time"
 )
 
-func (rf *Raft) getLastIndex() int {
+func (rf *Raft) getRelativeLastIndex() int {
 	return len(rf.log) - 1
 }
 
+func (rf *Raft) getAbsoluteLastIndex() int {
+	return rf.lastIncludedIndex + len(rf.log) - 1
+}
+
+func (rf *Raft) getRelativeIndex(absoluteIndex int) int {
+	return absoluteIndex - rf.lastIncludedIndex
+}
+
+func (rf *Raft) getAbsoluteIndex(relativeIndex int) int {
+	return relativeIndex + rf.lastIncludedIndex
+}
+
 func (rf *Raft) getLastTerm() int {
-	return rf.log[rf.getLastIndex()].Term
+	return rf.log[rf.getRelativeLastIndex()].Term
 }
 
 func (rf *Raft) isUpToDate(lastLogIndex int, lastLogTerm int) bool {
 	if lastLogTerm == rf.getLastTerm() {
-		return lastLogIndex >= rf.getLastIndex()
+		return lastLogIndex >= rf.getAbsoluteLastIndex()
 	}
 
 	return lastLogTerm > rf.getLastTerm()

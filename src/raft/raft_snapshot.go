@@ -32,7 +32,6 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 
 	rf.lastIncludedIndex = args.LastIncludedIndex
 	rf.lastIncludedTerm = args.LastIncludedTerm
-	rf.offset = args.LastIncludedIndex + 1
 
 	rf.persist()
 }
@@ -75,7 +74,7 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 }
 
 func (rf *Raft) trimLog(index int) {
-	sliceIndex := index - rf.offset
+	sliceIndex := index - rf.lastIncludedIndex - 1
 
 	if sliceIndex < 0 {
 		rf.log = []LogEntry{}
@@ -88,7 +87,6 @@ func (rf *Raft) trimLog(index int) {
 
 	rf.lastIncludedIndex = index
 	rf.lastIncludedTerm = rf.log[sliceIndex].Term
-	rf.offset = index + 1
 	rf.log = rf.log[sliceIndex+1:]
 
 	rf.persist()

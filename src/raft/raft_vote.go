@@ -89,7 +89,7 @@ func (rf *Raft) broadcastRequestVote() {
 	args := &RequestVoteArgs{
 		Term:         rf.currentTerm,
 		CandidateId:  rf.me,
-		LastLogIndex: rf.getLastIndex(),
+		LastLogIndex: rf.getAbsoluteLastIndex(),
 		LastLogTerm:  rf.getLastTerm(),
 	}
 

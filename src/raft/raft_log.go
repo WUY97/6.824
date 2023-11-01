@@ -22,23 +22,25 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	rf.sendToChannel(rf.heartbeatCh, true)
 
-	lastIndex := rf.getLastIndex()
+	absoluteLastIndex := rf.getAbsoluteLastIndex()
+	relativeLastIndex := rf.getRelativeLastIndex()
 
-	if args.PrevLogIndex > lastIndex {
-		reply.ConflictIndex = lastIndex + 1
+	if args.PrevLogIndex > absoluteLastIndex {
+		reply.ConflictIndex = absoluteLastIndex + 1
 		return
 	}
 
-	if conflictTerm := rf.log[args.PrevLogIndex].Term; conflictTerm != args.PrevLogTerm {
+	relativePrevLogIndex := rf.getRelativeIndex(args.PrevLogIndex)
+	if conflictTerm := rf.log[relativePrevLogIndex].Term; conflictTerm != args.PrevLogTerm {
 		reply.ConflictTerm = conflictTerm
-		for i := args.PrevLogIndex; i >= 0 && rf.log[i].Term == conflictTerm; i-- {
-			reply.ConflictIndex = i
+		for i := relativePrevLogIndex; i >= 0 && rf.log[i].Term == conflictTerm; i-- {
+			reply.ConflictIndex = rf.getAbsoluteIndex(i)
 		}
 		return
 	}
 
-	i, j := args.PrevLogIndex+1, 0
-	for ; i <= lastIndex && j < len(args.Entries); i, j = i+1, j+1 {
+	i, j := relativePrevLogIndex+1, 0
+	for ; i <= relativeLastIndex && j < len(args.Entries); i, j = i+1, j+1 {
 		if rf.log[i].Term != args.Entries[j].Term {
 			break
 		}
@@ -52,7 +54,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	reply.Success = true
 
 	if args.LeaderCommit > rf.commitIndex {
-		rf.commitIndex = int(math.Min(float64(args.LeaderCommit), float64(lastIndex)))
+		rf.commitIndex = int(math.Min(float64(args.LeaderCommit), float64(absoluteLastIndex)))
 		go rf.applyLogEntries()
 	}
 }
@@ -62,9 +64,10 @@ func (rf *Raft) applyLogEntries() {
 	defer rf.mu.Unlock()
 
 	for i := rf.lastApplied + 1; i <= rf.commitIndex; i++ {
+		relativeIndex := rf.getRelativeIndex(i)
 		rf.applyCh <- ApplyMsg{
 			CommandValid: true,
-			Command:      rf.log[i].Command,
+			Command:      rf.log[relativeIndex].Command,
 			CommandIndex: i,
 		}
 		rf.lastApplied = i
@@ -98,7 +101,7 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 		rf.nextIndex[server] = reply.ConflictIndex
 		rf.matchIndex[server] = rf.nextIndex[server] - 1
 	} else {
-		newNextIndex := rf.getLastIndex()
+		newNextIndex := rf.getRelativeLastIndex()
 		for ; newNextIndex >= 0; newNextIndex-- {
 			if rf.log[newNextIndex].Term == reply.ConflictTerm {
 				break
@@ -108,13 +111,13 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 		if newNextIndex < 0 {
 			rf.nextIndex[server] = reply.ConflictIndex
 		} else {
-			rf.nextIndex[server] = newNextIndex
+			rf.nextIndex[server] = rf.getAbsoluteIndex(newNextIndex)
 		}
 
 		rf.matchIndex[server] = rf.nextIndex[server] - 1
 	}
 
-	for i := rf.getLastIndex(); i > rf.commitIndex; i-- {
+	for i := rf.getRelativeLastIndex(); i > rf.getRelativeIndex(rf.commitIndex); i-- {
 		if rf.log[i].Term == rf.currentTerm {
 			count := 1
 			for j := range rf.peers {
@@ -124,7 +127,7 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 			}
 
 			if count*2 > len(rf.peers) {
-				rf.commitIndex = i
+				rf.commitIndex = rf.getAbsoluteIndex(i)
 				go rf.applyLogEntries()
 				break
 			}
@@ -143,9 +146,10 @@ func (rf *Raft) broadcastAppendEntries() {
 			args.Term = rf.currentTerm
 			args.LeaderId = rf.me
 			args.PrevLogIndex = rf.nextIndex[i] - 1
-			args.PrevLogTerm = rf.log[args.PrevLogIndex].Term
+			args.PrevLogTerm = rf.log[rf.getRelativeIndex(args.PrevLogIndex)].Term
 			args.LeaderCommit = rf.commitIndex
-			entries := rf.log[rf.nextIndex[i]:]
+			entriesStart := rf.getRelativeIndex(rf.nextIndex[i])
+			entries := rf.log[entriesStart:]
 			args.Entries = make([]LogEntry, len(entries))
 			// make a deep copy of the entries to send
 			copy(args.Entries, entries)
