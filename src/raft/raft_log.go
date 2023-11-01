@@ -1,15 +1,18 @@
 package raft
 
+import "math"
+
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	defer rf.persist()
 
+	reply.Term = rf.currentTerm
+	reply.Success = false
+	reply.ConflictIndex = -1
+	reply.ConflictTerm = -1
+
 	if args.Term < rf.currentTerm {
-		reply.Term = rf.currentTerm
-		reply.Success = false
-		reply.ConflictIndex = -1
-		reply.ConflictTerm = -1
 		return
 	}
 
@@ -17,13 +20,9 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.convertToFollower(args.Term)
 	}
 
-	lastIndex := rf.getLastIndex()
 	rf.sendToChannel(rf.heartbeatCh, true)
 
-	reply.Term = rf.currentTerm
-	reply.Success = false
-	reply.ConflictIndex = -1
-	reply.ConflictTerm = -1
+	lastIndex := rf.getLastIndex()
 
 	if args.PrevLogIndex > lastIndex {
 		reply.ConflictIndex = lastIndex + 1
@@ -35,29 +34,25 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		for i := args.PrevLogIndex; i >= 0 && rf.log[i].Term == conflictTerm; i-- {
 			reply.ConflictIndex = i
 		}
-		reply.Success = false
 		return
 	}
 
 	i, j := args.PrevLogIndex+1, 0
-	for ; i < lastIndex+1 && j < len(args.Entries); i, j = i+1, j+1 {
+	for ; i <= lastIndex && j < len(args.Entries); i, j = i+1, j+1 {
 		if rf.log[i].Term != args.Entries[j].Term {
 			break
 		}
 	}
 	rf.log = rf.log[:i]
-	args.Entries = args.Entries[j:]
-	rf.log = append(rf.log, args.Entries...)
+	if len(args.Entries) > j {
+		args.Entries = args.Entries[j:]
+		rf.log = append(rf.log, args.Entries...)
+	}
 
 	reply.Success = true
 
 	if args.LeaderCommit > rf.commitIndex {
-		lastIndex = rf.getLastIndex()
-		if args.LeaderCommit < lastIndex {
-			rf.commitIndex = args.LeaderCommit
-		} else {
-			rf.commitIndex = lastIndex
-		}
+		rf.commitIndex = int(math.Min(float64(args.LeaderCommit), float64(lastIndex)))
 		go rf.applyLogEntries()
 	}
 }
@@ -86,12 +81,10 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 	defer rf.mu.Unlock()
 	defer rf.persist()
 
-	if rf.state != Leader || args.Term != rf.currentTerm || reply.Term != rf.currentTerm {
-		return
-	}
-
-	if reply.Term > rf.currentTerm {
-		rf.convertToFollower(args.Term)
+	if rf.state != Leader || reply.Term > rf.currentTerm {
+		if reply.Term > rf.currentTerm {
+			rf.convertToFollower(reply.Term)
+		}
 		return
 	}
 

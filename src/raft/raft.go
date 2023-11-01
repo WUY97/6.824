@@ -24,14 +24,6 @@ import (
 	"6.824/labrpc"
 )
 
-func (rf *Raft) getLastIndex() int {
-	return len(rf.log) - 1
-}
-
-func (rf *Raft) getLastTerm() int {
-	return rf.log[rf.getLastIndex()].Term
-}
-
 // return currentTerm and whether this server
 // believes it is the leader.
 func (rf *Raft) GetState() (int, bool) {

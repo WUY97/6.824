@@ -5,6 +5,14 @@ import (
 	"time"
 )
 
+func (rf *Raft) getLastIndex() int {
+	return len(rf.log) - 1
+}
+
+func (rf *Raft) getLastTerm() int {
+	return rf.log[rf.getLastIndex()].Term
+}
+
 func (rf *Raft) isUpToDate(lastLogIndex int, lastLogTerm int) bool {
 	if lastLogTerm == rf.getLastTerm() {
 		return lastLogIndex >= rf.getLastIndex()
