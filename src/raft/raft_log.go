@@ -1,6 +1,8 @@
 package raft
 
-import "math"
+import (
+	"math"
+)
 
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	rf.mu.Lock()
@@ -11,6 +13,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	reply.Success = false
 	reply.ConflictIndex = -1
 	reply.ConflictTerm = -1
+	reply.NeedSnapshot = false
 
 	if args.Term < rf.currentTerm {
 		return
@@ -24,6 +27,12 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	absoluteLastIndex := rf.getAbsoluteLastIndex()
 	relativeLastIndex := rf.getRelativeLastIndex()
+
+	if args.PrevLogIndex < rf.lastIncludedIndex {
+		reply.ConflictIndex = rf.lastIncludedIndex + 1
+		reply.NeedSnapshot = true
+		return
+	}
 
 	if args.PrevLogIndex > absoluteLastIndex {
 		reply.ConflictIndex = absoluteLastIndex + 1
@@ -64,7 +73,15 @@ func (rf *Raft) applyLogEntries() {
 	defer rf.mu.Unlock()
 
 	for i := rf.lastApplied + 1; i <= rf.commitIndex; i++ {
+		if i <= rf.lastIncludedIndex {
+			continue
+		}
+
 		relativeIndex := rf.getRelativeIndex(i)
+		if relativeIndex >= len(rf.log) || relativeIndex < 0 {
+			continue
+		}
+
 		rf.applyCh <- ApplyMsg{
 			CommandValid: true,
 			Command:      rf.log[relativeIndex].Command,
@@ -131,29 +148,6 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 				go rf.applyLogEntries()
 				break
 			}
-		}
-	}
-}
-
-func (rf *Raft) broadcastAppendEntries() {
-	if rf.state != Leader {
-		return
-	}
-
-	for i := range rf.peers {
-		if i != rf.me {
-			args := AppendEntriesArgs{}
-			args.Term = rf.currentTerm
-			args.LeaderId = rf.me
-			args.PrevLogIndex = rf.nextIndex[i] - 1
-			args.PrevLogTerm = rf.log[rf.getRelativeIndex(args.PrevLogIndex)].Term
-			args.LeaderCommit = rf.commitIndex
-			entriesStart := rf.getRelativeIndex(rf.nextIndex[i])
-			entries := rf.log[entriesStart:]
-			args.Entries = make([]LogEntry, len(entries))
-			// make a deep copy of the entries to send
-			copy(args.Entries, entries)
-			go rf.sendAppendEntries(i, &args, &AppendEntriesReply{})
 		}
 	}
 }
