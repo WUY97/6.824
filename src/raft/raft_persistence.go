@@ -18,12 +18,7 @@ func (rf *Raft) persist() {
 	// e.Encode(rf.yyy)
 	// data := w.Bytes()
 	// rf.persister.SaveRaftState(data)
-	w := new(bytes.Buffer)
-	e := labgob.NewEncoder(w)
-	if e.Encode(rf.currentTerm) != nil || e.Encode(rf.votedFor) != nil || e.Encode(rf.log) != nil || e.Encode(rf.lastIncludedIndex) != nil || e.Encode(rf.lastIncludedTerm) != nil {
-		panic("failed to encode raft persistent state")
-	}
-	data := w.Bytes()
+	data := rf.raftStateForPersist()
 	rf.persister.SaveRaftState(data)
 }
 
@@ -39,4 +34,13 @@ func (rf *Raft) readPersist(data []byte) {
 	if d.Decode(&rf.currentTerm) != nil || d.Decode(&rf.votedFor) != nil || d.Decode(&rf.log) != nil || d.Decode(&rf.lastIncludedIndex) != nil || d.Decode(&rf.lastIncludedTerm) != nil {
 		panic("failed to decode raft persistent state")
 	}
+}
+
+func (rf *Raft) raftStateForPersist() []byte {
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	if e.Encode(rf.currentTerm) != nil || e.Encode(rf.votedFor) != nil || e.Encode(rf.log) != nil || e.Encode(rf.lastIncludedIndex) != nil || e.Encode(rf.lastIncludedTerm) != nil {
+		panic("failed to encode raft persistent state")
+	}
+	return w.Bytes()
 }

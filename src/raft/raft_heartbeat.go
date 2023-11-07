@@ -1,7 +1,5 @@
 package raft
 
-import "fmt"
-
 func (rf *Raft) broadcastAppendEntries() {
 	if rf.state != Leader {
 		return
@@ -10,7 +8,6 @@ func (rf *Raft) broadcastAppendEntries() {
 	for i := range rf.peers {
 		if i != rf.me {
 			if rf.nextIndex[i] <= rf.lastIncludedIndex {
-				fmt.Printf("leader commit index: %d, last included index: %d\n", rf.commitIndex, rf.lastIncludedIndex)
 				snapshotArgs := InstallSnapshotArgs{
 					Term:              rf.currentTerm,
 					LeaderId:          rf.me,
@@ -26,27 +23,18 @@ func (rf *Raft) broadcastAppendEntries() {
 			args := AppendEntriesArgs{}
 			args.Term = rf.currentTerm
 			args.LeaderId = rf.me
+			args.LeaderCommit = rf.commitIndex
 			args.PrevLogIndex = rf.nextIndex[i] - 1
+
 			if args.PrevLogIndex == rf.lastIncludedIndex {
 				args.PrevLogTerm = rf.lastIncludedTerm
-			} else if args.PrevLogIndex > rf.lastIncludedIndex {
-				relativePrevLogIndex := rf.getRelativeIndex(args.PrevLogIndex)
-				if relativePrevLogIndex >= 0 && relativePrevLogIndex < len(rf.log) {
-					args.PrevLogTerm = rf.log[relativePrevLogIndex].Term
-				} else {
-					// Should not reach here if you're managing logs correctly. Log error or panic as needed.
-					continue
-				}
 			} else {
-				// The PrevLogIndex is before the snapshot, so skip this iteration
-				continue
+				args.PrevLogTerm = rf.log[rf.getRelativeIndex(args.PrevLogIndex)].Term
 			}
-			args.LeaderCommit = rf.commitIndex
-			entriesStart := rf.getRelativeIndex(rf.nextIndex[i])
-			entries := rf.log[entriesStart:]
-			args.Entries = make([]LogEntry, len(entries))
-			// make a deep copy of the entries to send
-			copy(args.Entries, entries)
+
+			args.Entries = make([]LogEntry, 0)
+			args.Entries = append(args.Entries, rf.log[rf.getRelativeIndex(args.PrevLogIndex+1):]...)
+
 			appendEntriesReply := AppendEntriesReply{}
 			go rf.sendAppendEntries(i, &args, &appendEntriesReply)
 

@@ -10,11 +10,11 @@ func (rf *Raft) getRelativeLastIndex() int {
 }
 
 func (rf *Raft) getAbsoluteLastIndex() int {
-	return rf.lastIncludedIndex + len(rf.log) - 1
+	return rf.lastIncludedIndex + len(rf.log)
 }
 
 func (rf *Raft) getRelativeIndex(absoluteIndex int) int {
-	return absoluteIndex - rf.lastIncludedIndex
+	return absoluteIndex - rf.lastIncludedIndex - 1
 }
 
 func (rf *Raft) getAbsoluteIndex(relativeIndex int) int {
@@ -22,7 +22,11 @@ func (rf *Raft) getAbsoluteIndex(relativeIndex int) int {
 }
 
 func (rf *Raft) getLastTerm() int {
-	return rf.log[rf.getRelativeLastIndex()].Term
+	if len(rf.log) == 0 {
+		return rf.lastIncludedTerm
+	}
+
+	return rf.log[len(rf.log)-1].Term
 }
 
 func (rf *Raft) isUpToDate(lastLogIndex int, lastLogTerm int) bool {

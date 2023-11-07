@@ -50,7 +50,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	defer rf.mu.Unlock()
 
 	if rf.state != Leader {
-		return -1, rf.currentTerm, false
+		return -1, -1, false
 	}
 
 	term := rf.currentTerm
@@ -145,9 +145,6 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.leaderCh = make(chan bool)
 	rf.stepDownCh = make(chan bool)
 
-	rf.log = append(rf.log, LogEntry{Term: 0})
-	rf.commitIndex = 0
-	rf.lastApplied = 0
 	rf.applyCh = applyCh
 
 	rf.lastIncludedIndex = 0

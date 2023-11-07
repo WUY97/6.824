@@ -1,7 +1,5 @@
 package raft
 
-import "fmt"
-
 func (rf *Raft) sendInstallSnapshot(server int, args *InstallSnapshotArgs, reply *InstallSnapshotReply) {
 	ok := rf.peers[server].Call("Raft.InstallSnapshot", args, reply)
 	if !ok {
@@ -12,60 +10,71 @@ func (rf *Raft) sendInstallSnapshot(server int, args *InstallSnapshotArgs, reply
 	defer rf.mu.Unlock()
 	defer rf.persist()
 
-	if rf.state != Leader || reply.Term > rf.currentTerm {
-		if reply.Term > rf.currentTerm {
-			rf.convertToFollower(reply.Term)
-		}
+	if rf.currentTerm != args.Term {
 		return
 	}
 
-	rf.nextIndex[server] = args.LastIncludedIndex + 1
-	if rf.commitIndex < args.LastIncludedIndex {
-		rf.commitIndex = args.LastIncludedIndex
+	if rf.state != Leader {
+		return
 	}
+
+	if reply.Term > rf.currentTerm {
+		rf.convertToFollower(reply.Term)
+		rf.persist()
+		return
+	}
+
+	rf.nextIndex[server] = rf.getAbsoluteLastIndex() + 1
+	rf.matchIndex[server] = args.LastIncludedIndex
+	rf.updateCommitIndex()
 }
 
 func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapshotReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+
+	reply.Term = rf.currentTerm
+
 	if args.Term < rf.currentTerm {
 		return
 	}
 
 	if args.Term > rf.currentTerm {
 		rf.convertToFollower(args.Term)
-		return
+		rf.persist()
 	}
 
-	if rf.lastIncludedIndex >= args.LastIncludedIndex {
+	rf.sendToChannel(rf.heartbeatCh, true)
+
+	if args.LastIncludedIndex <= rf.lastIncludedIndex {
 		return
-	}
-
-	rf.commitIndex = args.LastIncludedIndex
-	rf.lastApplied = args.LastIncludedIndex
-
-	// rf.votedFor = -1
-
-	rf.applyCh <- ApplyMsg{
-		CommandValid:  false,
-		Snapshot:      args.Data,
-		SnapshotTerm:  args.LastIncludedTerm,
-		SnapshotIndex: args.LastIncludedIndex,
-		SnapshotValid: true,
+	} else {
+		if args.LastIncludedIndex < rf.getAbsoluteLastIndex() {
+			if rf.log[rf.getRelativeIndex(args.LastIncludedIndex)].Term != args.LastIncludedTerm {
+				rf.log = make([]LogEntry, 0)
+			} else {
+				entries := make([]LogEntry, rf.getAbsoluteLastIndex()-args.LastIncludedIndex)
+				copy(entries, rf.log[rf.getRelativeIndex(args.LastIncludedIndex)+1:])
+				rf.log = entries
+			}
+		} else {
+			rf.log = make([]LogEntry, 0)
+		}
 	}
 
 	rf.lastIncludedIndex = args.LastIncludedIndex
 	rf.lastIncludedTerm = args.LastIncludedTerm
 
-	rf.trimLog(args.LastIncludedIndex)
+	rf.persister.SaveStateAndSnapshot(rf.raftStateForPersist(), args.Data)
 
-	if rf.log[0].Term != args.LastIncludedTerm {
-		panic(fmt.Sprintf("Mismatched term after snapshot: %d != %d", rf.log[0].Term, rf.lastIncludedTerm))
+	rf.applyCh <- ApplyMsg{
+		SnapshotValid: true,
+		Snapshot:      args.Data,
+		SnapshotTerm:  args.LastIncludedTerm,
+		SnapshotIndex: args.LastIncludedIndex,
 	}
 
-	reply.Term = rf.currentTerm
-
-	rf.persist()
+	rf.lastApplied = args.LastIncludedIndex
 }
 
 // A service wants to switch to snapshot.  Only do so if Raft hasn't
@@ -88,30 +97,14 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 		return
 	}
 
-	rf.persist()
+	compactLogLen := index - rf.lastIncludedIndex
 
-	rf.trimLog(index)
+	rf.lastIncludedTerm = rf.log[rf.getRelativeIndex(index)].Term
 	rf.lastIncludedIndex = index
-	rf.lastIncludedTerm = rf.log[0].Term
 
-	rf.persister.SaveStateAndSnapshot(rf.persister.ReadRaftState(), snapshot)
-}
+	afterLog := make([]LogEntry, len(rf.log)-compactLogLen)
+	copy(afterLog, rf.log[compactLogLen:])
+	rf.log = afterLog
 
-func (rf *Raft) trimLog(index int) {
-	sliceIndex := rf.getRelativeIndex(index)
-
-	if sliceIndex < 0 {
-		rf.log = []LogEntry{}
-		return
-	}
-
-	if sliceIndex >= len(rf.log) {
-		return
-	}
-
-	entries := make([]LogEntry, len(rf.log)-sliceIndex)
-	copy(entries, rf.log[sliceIndex:])
-	rf.log = entries
-
-	rf.persist()
+	rf.persister.SaveStateAndSnapshot(rf.raftStateForPersist(), snapshot)
 }
