@@ -54,3 +54,9 @@ func (rf *Raft) resetChannels() {
 	rf.leaderCh = make(chan bool)
 	rf.stepDownCh = make(chan bool)
 }
+
+func (rf *Raft) CurrentTerm() int {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	return rf.currentTerm
+}
