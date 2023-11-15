@@ -70,32 +70,33 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	if args.LeaderCommit > rf.commitIndex {
 		rf.commitIndex = int(math.Min(float64(args.LeaderCommit), float64(rf.getAbsoluteLastIndex())))
-		go rf.applyLogEntries()
+		// go rf.applyLogEntries()
+		rf.applyCond.Broadcast()
 	}
 }
 
-func (rf *Raft) applyLogEntries() {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
+// func (rf *Raft) applyLogEntries() {
+// 	rf.mu.Lock()
+// 	defer rf.mu.Unlock()
 
-	for i := rf.lastApplied + 1; i <= rf.commitIndex; i++ {
-		if i <= rf.lastIncludedIndex {
-			continue
-		}
+// 	for i := rf.lastApplied + 1; i <= rf.commitIndex; i++ {
+// 		if i <= rf.lastIncludedIndex {
+// 			continue
+// 		}
 
-		relativeIndex := rf.getRelativeIndex(i)
-		if relativeIndex >= len(rf.log) || relativeIndex < 0 {
-			continue
-		}
+// 		relativeIndex := rf.getRelativeIndex(i)
+// 		if relativeIndex >= len(rf.log) || relativeIndex < 0 {
+// 			continue
+// 		}
 
-		rf.applyCh <- ApplyMsg{
-			CommandValid: true,
-			Command:      rf.log[relativeIndex].Command,
-			CommandIndex: i,
-		}
-		rf.lastApplied = i
-	}
-}
+// 		rf.applyCh <- ApplyMsg{
+// 			CommandValid: true,
+// 			Command:      rf.log[relativeIndex].Command,
+// 			CommandIndex: i,
+// 		}
+// 		rf.lastApplied = i
+// 	}
+// }
 
 func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
@@ -157,6 +158,7 @@ func (rf *Raft) updateCommitIndex() {
 	n := sortedMatchIndex[len(sortedMatchIndex)/2]
 	if n > rf.commitIndex && (n <= rf.lastIncludedIndex || rf.log[rf.getRelativeIndex(n)].Term == rf.currentTerm) {
 		rf.commitIndex = n
-		go rf.applyLogEntries()
+		// go rf.applyLogEntries()
+		rf.applyCond.Broadcast()
 	}
 }

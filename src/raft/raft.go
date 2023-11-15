@@ -18,6 +18,7 @@ package raft
 //
 
 import (
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -118,6 +119,39 @@ func (rf *Raft) ticker() {
 	}
 }
 
+func (rf *Raft) applier() {
+	for !rf.killed() {
+		rf.mu.Lock()
+		for rf.lastApplied >= rf.commitIndex {
+			rf.applyCond.Wait()
+		}
+
+		var entriesToApply []ApplyMsg
+		for i := rf.lastApplied + 1; i <= rf.commitIndex; i++ {
+			if i <= rf.lastIncludedIndex {
+				continue
+			}
+
+			relativeIndex := rf.getRelativeIndex(i)
+			if relativeIndex < 0 || relativeIndex >= len(rf.log) {
+				continue
+			}
+
+			entriesToApply = append(entriesToApply, ApplyMsg{
+				CommandValid: true,
+				Command:      rf.log[relativeIndex].Command,
+				CommandIndex: i,
+			})
+		}
+		rf.lastApplied = rf.commitIndex
+		rf.mu.Unlock()
+
+		for _, applyMsg := range entriesToApply {
+			rf.applyCh <- applyMsg
+		}
+	}
+}
+
 // the service or tester wants to create a Raft server. the ports
 // of all the Raft servers (including this one) are in peers[]. this
 // server's port is peers[me]. all the servers' peers[] arrays
@@ -146,6 +180,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.stepDownCh = make(chan bool)
 
 	rf.applyCh = applyCh
+	rf.applyCond = sync.NewCond(&rf.mu)
 
 	rf.lastIncludedIndex = 0
 	rf.lastIncludedTerm = 0
@@ -155,6 +190,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	// start ticker goroutine to start elections
 	go rf.ticker()
+	go rf.applier()
 
 	return rf
 }

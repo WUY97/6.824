@@ -56,6 +56,7 @@ type Raft struct {
 	leaderCh    chan bool
 	stepDownCh  chan bool
 	applyCh     chan ApplyMsg
+	applyCond   *sync.Cond
 
 	// For 2D:
 	lastIncludedIndex int // the absolute index of the last included entry in the snapshot
