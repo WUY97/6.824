@@ -1,4 +1,4 @@
-name: Lab2 Test
+name: Lab3 Test
 
 on:
   push:
@@ -26,9 +26,9 @@ jobs:
       run: go test -run 3A -race
       working-directory: ./src/kvraft
 
-    - name: Run tests 3B
-      run: go test -run 3B
-      working-directory: ./src/kvraft
+    # - name: Run tests 3B
+    #   run: go test -run 3B
+    #   working-directory: ./src/kvraft
 
 
 

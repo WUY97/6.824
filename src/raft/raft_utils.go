@@ -38,7 +38,8 @@ func (rf *Raft) isUpToDate(lastLogIndex int, lastLogTerm int) bool {
 }
 
 func randomElectionTimeout() time.Duration {
-	return ElectionTimeout + time.Duration(rand.Intn(int(ElectionBaseTimeout)))
+	randomIncrement := time.Duration(rand.Intn(int(ElectionMaxIncrement)))
+	return ElectionBaseTimeout + randomIncrement
 }
 
 func (rf *Raft) sendToChannel(channel chan bool, value bool) {
@@ -53,10 +54,4 @@ func (rf *Raft) resetChannels() {
 	rf.voteCh = make(chan bool)
 	rf.leaderCh = make(chan bool)
 	rf.stepDownCh = make(chan bool)
-}
-
-func (rf *Raft) CurrentTerm() int {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-	return rf.currentTerm
 }
