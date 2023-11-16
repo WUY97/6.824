@@ -1,25 +1,16 @@
 package raft
 
-func (rf *Raft) broadcastAppendEntries() {
+func (rf *Raft) broadcastAppendEntries(isHeartbeat bool) {
 	if rf.state != Leader {
 		return
 	}
 
-	var snapshotData []byte
-	var isSnapshotNeeded bool
-	for i := range rf.peers {
-		if i != rf.me && rf.nextIndex[i] <= rf.lastIncludedIndex {
-			isSnapshotNeeded = true
-			break
-		}
-	}
-
-	if isSnapshotNeeded {
-		snapshotData = rf.persister.ReadSnapshot()
-	}
-
 	for i := range rf.peers {
 		if i == rf.me {
+			continue
+		}
+
+		if !isHeartbeat && rf.nextIndex[i] < rf.getAbsoluteLastIndex() {
 			continue
 		}
 
@@ -29,7 +20,7 @@ func (rf *Raft) broadcastAppendEntries() {
 				LeaderId:          rf.me,
 				LastIncludedIndex: rf.lastIncludedIndex,
 				LastIncludedTerm:  rf.lastIncludedTerm,
-				Data:              snapshotData,
+				Data:              rf.persister.ReadSnapshot(),
 			}
 			snapshotReply := InstallSnapshotReply{}
 			go rf.sendInstallSnapshot(i, &snapshotArgs, &snapshotReply)

@@ -58,7 +58,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	rf.log = append(rf.log, LogEntry{Term: term, Command: command})
 	rf.persist()
 
-	rf.broadcastAppendEntries()
+	rf.broadcastAppendEntries(false)
 	return rf.getAbsoluteLastIndex(), term, true
 }
 
@@ -113,7 +113,7 @@ func (rf *Raft) ticker() {
 			case <-rf.stepDownCh:
 			case <-time.After(HeartbeatInterval):
 				rf.mu.Lock()
-				rf.broadcastAppendEntries()
+				rf.broadcastAppendEntries(true)
 				rf.mu.Unlock()
 			}
 		}
