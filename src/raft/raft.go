@@ -58,6 +58,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	rf.log = append(rf.log, LogEntry{Term: term, Command: command})
 	rf.persist()
 
+	rf.broadcastAppendEntries()
 	return rf.getAbsoluteLastIndex(), term, true
 }
 
