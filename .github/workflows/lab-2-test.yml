@@ -1,4 +1,4 @@
-name: Lab2 Test
+name: Lab 2 Raft
 
 on:
   push:

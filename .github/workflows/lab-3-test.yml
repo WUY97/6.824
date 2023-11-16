@@ -1,4 +1,4 @@
-name: Lab3 Test
+name: Lab 3 Fault-tolerant Key/Value Service
 
 on:
   push:
