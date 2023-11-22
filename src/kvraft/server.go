@@ -1,6 +1,7 @@
 package kvraft
 
 import (
+	"bytes"
 	"log"
 	"sync"
 	"sync/atomic"
@@ -44,6 +45,8 @@ type KVServer struct {
 	db              map[string]string
 	latestRequestId map[int64]int64
 	waitingOps      map[int]chan Op
+
+	lastApplied int
 }
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
@@ -156,7 +159,10 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.waitingOps = make(map[int]chan Op)
 
 	kv.applyCh = make(chan raft.ApplyMsg)
+
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
+	kv.readSnapshot(persister.ReadSnapshot())
+	kv.lastApplied = 0
 
 	go kv.applyOpsLoop()
 
@@ -165,32 +171,45 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 
 func (kv *KVServer) applyOpsLoop() {
 	for msg := range kv.applyCh {
-		if !msg.CommandValid {
-			continue
-		}
+		if msg.CommandValid {
+			index := msg.CommandIndex
+			op := msg.Command.(Op)
 
-		index := msg.CommandIndex
-		op := msg.Command.(Op)
+			kv.mu.Lock()
 
-		kv.mu.Lock()
-		if op.Type == "Get" {
-			kv.applyOp(&op)
-		} else {
-			lastId, ok := kv.latestRequestId[op.ClientId]
-			if !ok || lastId < op.RequestId {
-				kv.applyOp(&op)
-				kv.latestRequestId[op.ClientId] = op.RequestId
+			if index <= kv.lastApplied {
+				kv.mu.Unlock()
+				continue
 			}
-		}
+			kv.lastApplied = index
 
-		ch, ok := kv.waitingOps[index]
-		if !ok {
-			ch = make(chan Op, 1)
-			kv.waitingOps[index] = ch
-		}
-		ch <- op
+			if op.Type == "Get" {
+				kv.applyOp(&op)
+			} else {
+				lastId, ok := kv.latestRequestId[op.ClientId]
+				if !ok || lastId < op.RequestId {
+					kv.applyOp(&op)
+					kv.latestRequestId[op.ClientId] = op.RequestId
+				}
+			}
 
-		kv.mu.Unlock()
+			ch, ok := kv.waitingOps[index]
+			if !ok {
+				ch = make(chan Op, 1)
+				kv.waitingOps[index] = ch
+			}
+			ch <- op
+
+			if kv.needSnapshot() {
+				kv.createSnapshot(index)
+			}
+			kv.mu.Unlock()
+		} else if msg.SnapshotValid {
+			kv.mu.Lock()
+			kv.readSnapshot(msg.Snapshot)
+			kv.lastApplied = msg.SnapshotIndex
+			kv.mu.Unlock()
+		}
 	}
 }
 
@@ -202,5 +221,34 @@ func (kv *KVServer) applyOp(op *Op) {
 		kv.db[op.Key] += op.Value
 	case "Get":
 		op.Value = kv.db[op.Key]
+	}
+}
+
+func (kv *KVServer) needSnapshot() bool {
+	return kv.maxraftstate != -1 && kv.rf.RaftStateSize() >= kv.maxraftstate
+}
+
+func (kv *KVServer) createSnapshot(index int) {
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	e.Encode(kv.db)
+	e.Encode(kv.latestRequestId)
+	snapshot := w.Bytes()
+	kv.rf.Snapshot(index, snapshot)
+}
+
+func (kv *KVServer) readSnapshot(snapshot []byte) {
+	if snapshot == nil || len(snapshot) < 1 {
+		return
+	}
+	r := bytes.NewBuffer(snapshot)
+	d := labgob.NewDecoder(r)
+	var db map[string]string
+	var latestRequestId map[int64]int64
+	if d.Decode(&db) != nil || d.Decode(&latestRequestId) != nil {
+		panic("read snapshot error")
+	} else {
+		kv.db = db
+		kv.latestRequestId = latestRequestId
 	}
 }

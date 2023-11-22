@@ -44,3 +44,9 @@ func (rf *Raft) raftStateForPersist() []byte {
 	}
 	return w.Bytes()
 }
+
+func (rf *Raft) RaftStateSize() int {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	return rf.persister.RaftStateSize()
+}

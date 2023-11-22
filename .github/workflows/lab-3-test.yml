@@ -26,9 +26,9 @@ jobs:
       run: go test -run 3A -race
       working-directory: ./src/kvraft
 
-    # - name: Run tests 3B
-    #   run: go test -run 3B
-    #   working-directory: ./src/kvraft
+    - name: Run tests 3B
+      run: go test -run 3B -race
+      working-directory: ./src/kvraft
 
 
 

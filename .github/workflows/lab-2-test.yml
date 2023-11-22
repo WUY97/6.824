@@ -38,5 +38,9 @@ jobs:
       run: go test -run 2D
       working-directory: ./src/raft
 
+    - name: Run tests 2 Race
+      run: go test -run 2 -race
+      working-directory: ./src/raft
+
 
 
