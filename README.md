@@ -9,4 +9,4 @@
 
 - [x] [![Lab 3: Fault-tolerant Key/Value Service](https://github.com/WUY97/distributed-systems/actions/workflows/lab-3-test.yml/badge.svg)](https://github.com/WUY97/distributed-systems/actions/workflows/lab-3-test.yml)
 
-- [ ] Lab 4: Sharded Key/Value Service
+- [x] [![Lab 4 Sharded Key/Value Service](https://github.com/WUY97/distributed-systems/actions/workflows/lab-4-test.yml/badge.svg)](https://github.com/WUY97/distributed-systems/actions/workflows/lab-4-test.yml)
