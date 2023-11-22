@@ -1,0 +1,34 @@
+name: Lab 4 Sharded Key/Value Service
+
+on:
+  push:
+    branches:
+    - '*'
+  pull_request:
+    branches:
+    - '*'
+
+jobs:
+  test:
+    name: Run Go Test
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Set up Go
+      uses: actions/setup-go@v2
+      with:
+        go-version: '1.15'
+
+    - name: Check out code
+      uses: actions/checkout@v2
+
+    - name: Run tests 4A
+      run: go test -race
+      working-directory: ./src/shardctrler
+
+    - name: Run tests 4B
+      run: go test -race
+      working-directory: ./src/shardkv
+
+
+
