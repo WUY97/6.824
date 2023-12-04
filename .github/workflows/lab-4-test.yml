@@ -26,9 +26,9 @@ jobs:
       run: go test -race
       working-directory: ./src/shardctrler
 
-    # - name: Run tests 4B
-    #   run: go test -race
-    #   working-directory: ./src/shardkv
+    - name: Run tests 4B
+      run: go test -race
+      working-directory: ./src/shardkv
 
 
 
