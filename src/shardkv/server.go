@@ -37,12 +37,18 @@ type ShardKV struct {
 	waitingOps      map[int]chan Op
 
 	lastApplied int
+	config      shardctrler.Config
 
 	mck *shardctrler.Clerk
 }
 
 func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
 	// Your code here.
+	if !kv.isShardMatched(args.Key) {
+		reply.Err = ErrWrongGroup
+		return
+	}
+
 	op := Op{
 		Type:      "Get",
 		Key:       args.Key,
@@ -62,6 +68,11 @@ func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
 
 func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// Your code here.
+	if !kv.isShardMatched(args.Key) {
+		reply.Err = ErrWrongGroup
+		return
+	}
+
 	op := Op{
 		Type:      args.Op,
 		Key:       args.Key,
@@ -100,10 +111,6 @@ func (kv *ShardKV) waitForApplied(op Op) (bool, Op) {
 	case <-time.After(200 * time.Millisecond):
 		return false, op
 	}
-}
-
-func (kv *ShardKV) isSameOp(issued Op, applied Op) bool {
-	return issued.ClientId == applied.ClientId && issued.RequestId == applied.RequestId
 }
 
 // the tester calls Kill() when a ShardKV instance won't
@@ -162,6 +169,7 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 
 	// kv.readSnapshot(persister.ReadSnapshot())
 	kv.lastApplied = 0
+	kv.config = shardctrler.Config{}
 
 	// Use something like this to talk to the shardctrler:
 	kv.mck = shardctrler.MakeClerk(kv.ctrlers)
@@ -170,6 +178,7 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 
 	go kv.applier()
+	go kv.fetchNewConfig()
 
 	return kv
 }
@@ -232,31 +241,22 @@ func (kv *ShardKV) applyOp(op *Op) {
 	}
 }
 
-// func (kv *ShardKV) needSnapshot() bool {
-// 	return kv.maxraftstate != -1 && kv.rf.RaftStateSize() >= kv.maxraftstate
-// }
+func (kv *ShardKV) fetchNewConfig() {
+	for {
+		kv.mu.Lock()
+		oldConfig := kv.config
+		kv.mu.Unlock()
 
-// func (kv *ShardKV) createSnapshot(index int) {
-// 	w := new(bytes.Buffer)
-// 	e := labgob.NewEncoder(w)
-// 	e.Encode(kv.db)
-// 	e.Encode(kv.latestRequestId)
-// 	snapshot := w.Bytes()
-// 	kv.rf.Snapshot(index, snapshot)
-// }
+		newConfig := kv.mck.Query(oldConfig.Num + 1)
+		if newConfig.Num != oldConfig.Num+1 {
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
 
-// func (kv *ShardKV) readSnapshot(snapshot []byte) {
-// 	if snapshot == nil || len(snapshot) < 1 {
-// 		return
-// 	}
-// 	r := bytes.NewBuffer(snapshot)
-// 	d := labgob.NewDecoder(r)
-// 	var db map[string]string
-// 	var latestRequestId map[int64]int64
-// 	if d.Decode(&db) != nil || d.Decode(&latestRequestId) != nil {
-// 		panic("read snapshot error")
-// 	} else {
-// 		kv.db = db
-// 		kv.latestRequestId = latestRequestId
-// 	}
-// }
+		kv.mu.Lock()
+		kv.config = newConfig
+		kv.mu.Unlock()
+
+		// TODO: migrate data
+	}
+}
