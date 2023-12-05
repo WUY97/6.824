@@ -108,6 +108,9 @@ func (sc *ShardCtrler) Query(args *QueryArgs, reply *QueryReply) {
 		return
 	}
 
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+
 	reply.WrongLeader = false
 	reply.Err = OK
 	if args.Num < 0 || args.Num >= len(sc.configs) {
