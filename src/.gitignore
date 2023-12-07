@@ -12,3 +12,4 @@ mrtmp.*
 /main/mrworker
 
 /raft-ref
+/shardctrler-ref

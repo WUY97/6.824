@@ -12,9 +12,9 @@ import "time"
 //
 
 const FetchConfigInterval = 100 * time.Millisecond
-const RetryPullInterval = 200 * time.Millisecond
-const RetryLeaveInterval = 200 * time.Millisecond
-const RaftTimeOut = 400 * time.Millisecond
+const RetryPullInterval = 150 * time.Millisecond
+const RetryLeaveInterval = 160 * time.Millisecond
+const RaftTimeOut = 200 * time.Millisecond
 
 const Debug = true
 
