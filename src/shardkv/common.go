@@ -9,11 +9,19 @@ package shardkv
 // You will have to modify these definitions.
 //
 
+const FetchConfigInterval = 100
+const RetryPullInterval = 200
+const RetryLeaveInterval = 200
+const RaftTimeOut = 200
+
+const Debug = false
+
 const (
-	OK             = "OK"
-	ErrNoKey       = "ErrNoKey"
-	ErrWrongGroup  = "ErrWrongGroup"
-	ErrWrongLeader = "ErrWrongLeader"
+	OK               = "OK"
+	ErrNoKey         = "ErrNoKey"
+	ErrWrongGroup    = "ErrWrongGroup"
+	ErrWrongLeader   = "ErrWrongLeader"
+	ErrConfigVersion = "ErrConfigVersion"
 )
 
 type Err string

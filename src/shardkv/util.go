@@ -1,9 +1,14 @@
 package shardkv
 
-func (kv *ShardKV) isSameOp(issued Op, applied Op) bool {
-	return issued.ClientId == applied.ClientId && issued.RequestId == applied.RequestId
-}
+import (
+	"fmt"
+	"log"
+)
 
-func (kv *ShardKV) isShardMatched(key string) bool {
-	return kv.config.Shards[key2shard(key)] == kv.gid
+func (kv *ShardKV) DPrintf(format string, a ...interface{}) (n int, err error) {
+	if Debug {
+		rightHalf := fmt.Sprintf(format, a...)
+		log.Printf("shardkv gid: %v | %s", kv.gid, rightHalf)
+	}
+	return
 }

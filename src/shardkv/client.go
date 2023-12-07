@@ -42,7 +42,6 @@ type Clerk struct {
 	config   shardctrler.Config
 	make_end func(string) *labrpc.ClientEnd
 	// You will have to modify this struct.
-	// leaderId  int32
 	clientId  int64
 	requestId int64
 }
@@ -59,7 +58,6 @@ func MakeClerk(ctrlers []*labrpc.ClientEnd, make_end func(string) *labrpc.Client
 	ck.sm = shardctrler.MakeClerk(ctrlers)
 	ck.make_end = make_end
 	// You'll have to add code here.
-	// ck.leaderId = 0
 	ck.clientId = nrand()
 	ck.requestId = 0
 	return ck
@@ -70,10 +68,11 @@ func MakeClerk(ctrlers []*labrpc.ClientEnd, make_end func(string) *labrpc.Client
 // keeps trying forever in the face of all other errors.
 // You will have to modify this function.
 func (ck *Clerk) Get(key string) string {
-	reqId := atomic.AddInt64(&ck.requestId, 1)
+	reqId := atomic.LoadInt64(&ck.requestId)
+	clientId := atomic.LoadInt64(&ck.clientId)
 	args := GetArgs{
 		Key:       key,
-		ClientId:  ck.clientId,
+		ClientId:  clientId,
 		RequestId: reqId,
 	}
 
@@ -87,7 +86,7 @@ func (ck *Clerk) Get(key string) string {
 				var reply GetReply
 				ok := srv.Call("ShardKV.Get", &args, &reply)
 				if ok && (reply.Err == OK || reply.Err == ErrNoKey) {
-					// atomic.StoreInt32(&ck.leaderId, int32(si))
+					atomic.AddInt64(&ck.requestId, 1)
 					return reply.Value
 				}
 				if ok && (reply.Err == ErrWrongGroup) {
@@ -105,12 +104,13 @@ func (ck *Clerk) Get(key string) string {
 // shared by Put and Append.
 // You will have to modify this function.
 func (ck *Clerk) PutAppend(key string, value string, op string) {
-	reqId := atomic.AddInt64(&ck.requestId, 1)
+	reqId := atomic.LoadInt64(&ck.requestId)
+	clientId := atomic.LoadInt64(&ck.clientId)
 	args := PutAppendArgs{
 		Key:       key,
 		Value:     value,
 		Op:        op,
-		ClientId:  ck.clientId,
+		ClientId:  clientId,
 		RequestId: reqId,
 	}
 
@@ -123,7 +123,7 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 				var reply PutAppendReply
 				ok := srv.Call("ShardKV.PutAppend", &args, &reply)
 				if ok && reply.Err == OK {
-					// atomic.StoreInt32(&ck.leaderId, int32(si))
+					atomic.AddInt64(&ck.requestId, 1)
 					return
 				}
 				if ok && reply.Err == ErrWrongGroup {
