@@ -37,13 +37,12 @@ func (kv *ShardKV) Pull(args *PullArgs, reply *PullReply) {
 			if !exist {
 				reply.Err = ErrConfigVersion
 			} else {
-				reply.Storage = map[string]string{}
+				pulledStorage := make(map[string]string)
 				shard.Storage.Range(func(key, value interface{}) bool {
-					strKey := key.(string)
-					strValue := value.(string)
-					reply.Storage[strKey] = strValue
+					pulledStorage[key.(string)] = value.(string)
 					return true
 				})
+				reply.Storage = pulledStorage
 				reply.Err = OK
 			}
 		}
@@ -72,7 +71,7 @@ func (kv *ShardKV) Leave(args *LeaveArgs, reply *LeaveReply) {
 		waitCh := kv.waitChs[raftIndex]
 		kv.mu.Unlock()
 		select {
-		case <-time.After(time.Millisecond * RaftTimeOut):
+		case <-time.After(RaftTimeOut):
 			kv.DPrintf("server %d timeout when handling Leave\n", kv.me)
 			reply.Err = ErrWrongLeader
 		case response := <-waitCh:

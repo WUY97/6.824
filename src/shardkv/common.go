@@ -1,5 +1,7 @@
 package shardkv
 
+import "time"
+
 //
 // Sharded key/value server.
 // Lots of replica groups, each running Raft.
@@ -9,12 +11,12 @@ package shardkv
 // You will have to modify these definitions.
 //
 
-const FetchConfigInterval = 100
-const RetryPullInterval = 200
-const RetryLeaveInterval = 200
-const RaftTimeOut = 200
+const FetchConfigInterval = 100 * time.Millisecond
+const RetryPullInterval = 200 * time.Millisecond
+const RetryLeaveInterval = 200 * time.Millisecond
+const RaftTimeOut = 400 * time.Millisecond
 
-const Debug = false
+const Debug = true
 
 const (
 	OK               = "OK"

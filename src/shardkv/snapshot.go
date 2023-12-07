@@ -3,6 +3,7 @@ package shardkv
 import (
 	"bytes"
 	"log"
+	"sync"
 
 	"6.824/labgob"
 	"6.824/shardctrler"
@@ -21,6 +22,7 @@ func (kv *ShardKV) createSnapshot(index int) {
 	kv.mu.Lock()
 	defer kv.mu.Unlock()
 	kv.DPrintf("server %d serialize to a snapshot\n", kv.me)
+
 	w := new(bytes.Buffer)
 	e := labgob.NewEncoder(w)
 
@@ -32,18 +34,20 @@ func (kv *ShardKV) createSnapshot(index int) {
 
 	snapshot := w.Bytes()
 	kv.rf.Snapshot(index, snapshot)
+	_, isLeader := kv.rf.GetState()
+	kv.DPrintf("server %d create snapshot, isLeader: %v\n", kv.me, isLeader)
 }
 
 func (kv *ShardKV) getSnapshotShard() map[int]*SnapshotShard {
 	shardCopy := make(map[int]*SnapshotShard)
 	for shardId, shard := range kv.shards {
-		storageMap := make(map[string]string)
+		snapshotStorage := make(map[string]string)
 		shard.Storage.Range(func(key, value interface{}) bool {
-			storageMap[key.(string)] = value.(string)
+			snapshotStorage[key.(string)] = value.(string)
 			return true
 		})
 		shardCopy[shardId] = &SnapshotShard{
-			StorageMap: storageMap,
+			StorageMap: snapshotStorage,
 			Status:     shard.Status,
 		}
 	}
@@ -78,6 +82,8 @@ func (kv *ShardKV) readSnapshot(snapshot []byte) {
 		kv.prevConfig = persistPrevConfig
 		kv.currConfig = persistCurrConfig
 		kv.getRuntimeShard(persistShards)
+		_, isLeader := kv.rf.GetState()
+		kv.DPrintf("server %d recover from persister, isLeader: %v\n", kv.me, isLeader)
 	}
 }
 
@@ -85,7 +91,8 @@ func (kv *ShardKV) getRuntimeShard(persistShards map[int]*SnapshotShard) {
 	kv.shards = make(map[int]*Shard)
 	for shardId, snapshotShard := range persistShards {
 		newShard := &Shard{
-			Status: snapshotShard.Status,
+			Storage: sync.Map{},
+			Status:  snapshotShard.Status,
 		}
 		for k, v := range snapshotShard.StorageMap {
 			newShard.Storage.Store(k, v)

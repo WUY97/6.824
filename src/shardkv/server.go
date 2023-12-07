@@ -107,7 +107,7 @@ func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
 	kv.mu.Unlock()
 
 	select {
-	case <-time.After(time.Millisecond * RaftTimeOut):
+	case <-time.After(RaftTimeOut):
 		kv.DPrintf("server %d timeout when handling Get\n", kv.me)
 		reply.Err = ErrWrongLeader
 	case response := <-waitCh:
@@ -151,7 +151,7 @@ func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	kv.mu.Unlock()
 
 	select {
-	case <-time.After(time.Millisecond * RaftTimeOut):
+	case <-time.After(RaftTimeOut):
 		kv.DPrintf("server %d timeout when handling PutAppend\n", kv.me)
 		reply.Err = ErrWrongLeader
 	case response := <-waitCh:
@@ -248,7 +248,6 @@ func (kv *ShardKV) applier() {
 			}
 			kv.mu.Unlock()
 
-			kv.latestAppliedRaftIndex = index
 			waitChResponse := WaitChResponse{}
 			switch op.Type {
 			case GET:
@@ -267,15 +266,18 @@ func (kv *ShardKV) applier() {
 				kv.handleTransferDone(op, &waitChResponse)
 			}
 
-			kv.mu.Lock()
-			waitCh, exist := kv.waitChs[index]
-			if exist {
-				waitCh <- waitChResponse
-			}
-			kv.mu.Unlock()
+			kv.latestAppliedRaftIndex = index
 
 			if kv.needSnapshot() {
 				kv.createSnapshot(index)
+			}
+
+			kv.mu.Lock()
+			waitCh, exist := kv.waitChs[index]
+			kv.mu.Unlock()
+
+			if exist {
+				waitCh <- waitChResponse
 			}
 		} else if msg.SnapshotValid {
 			if msg.SnapshotIndex > kv.latestAppliedRaftIndex {
@@ -393,6 +395,7 @@ func (kv *ShardKV) handleUpdateConfig(op Op, waitChResponse *WaitChResponse) {
 		for shardId, gid := range op.Config.Shards {
 			if gid == kv.gid {
 				_, exist := kv.shards[shardId]
+				kv.DPrintf("shard %v exist: %v\n", shardId, exist)
 				if !exist {
 					kv.shards[shardId] = &Shard{
 						Storage: sync.Map{},
@@ -414,19 +417,23 @@ func (kv *ShardKV) handleUpdateConfig(op Op, waitChResponse *WaitChResponse) {
 func (kv *ShardKV) pullShard(shardId int, configVersion int) {
 	for {
 		kv.mu.Lock()
+		kv.DPrintf("pull shard %v, configVersion %v\n", shardId, configVersion)
 		if kv.currConfig.Num > configVersion {
+			kv.DPrintf("config version %v > %v, stop pulling\n", kv.currConfig.Num, configVersion)
 			kv.mu.Unlock()
 			break
 		}
 		if kv.shards[shardId].Status != PULLING {
+			kv.DPrintf("shard %v status is not PULLING, stop pulling\n", shardId)
 			kv.mu.Unlock()
 			break
 		}
 
 		_, isLeader := kv.rf.GetState()
 		if !isLeader {
+			kv.DPrintf("server %v is not leader, stop pulling\n", kv.me)
 			kv.mu.Unlock()
-			time.Sleep(time.Millisecond * RetryPullInterval)
+			time.Sleep(RetryPullInterval)
 			continue
 		}
 
@@ -441,7 +448,12 @@ func (kv *ShardKV) pullShard(shardId int, configVersion int) {
 				var reply PullReply
 				ok := srv.Call("ShardKV.Pull", &args, &reply)
 				if ok && (reply.Err == OK) {
-					kv.rf.Start(Op{Type: PULL_SHARD, ShardId: shardId, ConfigVersion: configVersion, Storage: reply.Storage})
+					kv.rf.Start(Op{
+						Type:          PULL_SHARD,
+						ShardId:       shardId,
+						ConfigVersion: configVersion,
+						Storage:       reply.Storage,
+					})
 					break
 				}
 				if ok && (reply.Err == ErrConfigVersion) {
@@ -451,6 +463,7 @@ func (kv *ShardKV) pullShard(shardId int, configVersion int) {
 			}
 		}
 		kv.mu.Unlock()
+		time.Sleep(RetryPullInterval)
 	}
 }
 
@@ -462,8 +475,8 @@ func (kv *ShardKV) handlePullShard(op Op, waitChResponse *WaitChResponse) {
 	}
 
 	kv.DPrintf("get shard %v from ex-owner\n", op.ShardId)
-	for key, value := range op.Storage {
-		kv.shards[op.ShardId].Storage.Store(key, value)
+	for k, v := range op.Storage {
+		kv.shards[op.ShardId].Storage.Store(k, v)
 	}
 	kv.shards[op.ShardId].Status = WAITING
 	go kv.sendLeave(op.ShardId, kv.currConfig.Num)
@@ -483,7 +496,7 @@ func (kv *ShardKV) sendLeave(shardId int, configVersion int) {
 		_, isLeader := kv.rf.GetState()
 		if !isLeader {
 			kv.mu.Unlock()
-			time.Sleep(time.Millisecond * RetryLeaveInterval)
+			time.Sleep(RetryLeaveInterval)
 			continue
 		}
 
@@ -499,7 +512,11 @@ func (kv *ShardKV) sendLeave(shardId int, configVersion int) {
 				var reply LeaveReply
 				ok := srv.Call("ShardKV.Leave", &args, &reply)
 				if ok && (reply.Err == OK) {
-					kv.rf.Start(Op{Type: TRANSFER_DONE, ShardId: shardId, ConfigVersion: configVersion})
+					kv.rf.Start(Op{
+						Type:          TRANSFER_DONE,
+						ShardId:       shardId,
+						ConfigVersion: configVersion,
+					})
 					break
 				}
 				if ok && (reply.Err == ErrConfigVersion) {
@@ -509,7 +526,7 @@ func (kv *ShardKV) sendLeave(shardId int, configVersion int) {
 			}
 		}
 		kv.mu.Unlock()
-		time.Sleep(time.Millisecond * RetryLeaveInterval)
+		time.Sleep(RetryLeaveInterval)
 	}
 }
 
@@ -541,13 +558,14 @@ func (kv *ShardKV) handleTransferDone(op Op, waitChResponse *WaitChResponse) {
 
 func (kv *ShardKV) fetchNextConfig() {
 	for {
+		kv.mu.Lock()
 		_, isLeader := kv.rf.GetState()
 		if !isLeader {
-			time.Sleep(time.Millisecond * FetchConfigInterval)
+			kv.mu.Unlock()
+			time.Sleep(FetchConfigInterval)
 			continue
 		}
 
-		kv.mu.Lock()
 		readForNext := true
 		for _, shard := range kv.shards {
 			if shard.Status != WORKING {
@@ -569,6 +587,6 @@ func (kv *ShardKV) fetchNextConfig() {
 			}
 		}
 		kv.mu.Unlock()
-		time.Sleep(time.Millisecond * FetchConfigInterval)
+		time.Sleep(FetchConfigInterval)
 	}
 }
