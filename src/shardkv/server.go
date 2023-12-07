@@ -61,8 +61,13 @@ type ShardKV struct {
 }
 
 type Shard struct {
-	Storage map[string]string
+	Storage sync.Map
 	Status  ShardStatus
+}
+
+type SnapshotShard struct {
+	StorageMap map[string]string
+	Status     ShardStatus
 }
 
 type ShardStatus int
@@ -301,14 +306,14 @@ func (kv *ShardKV) handleGet(op Op, waitChResponse *WaitChResponse) {
 		kv.latestAppliedRequest[op.ClientId] = op.RequestId
 	}
 
-	value, keyExist := shard.Storage[op.Key]
+	value, keyExist := shard.Storage.Load(op.Key)
 	if !keyExist {
 		waitChResponse.err = ErrNoKey
 		return
 	}
 
 	waitChResponse.err = OK
-	waitChResponse.value = value
+	waitChResponse.value = value.(string)
 }
 
 func (kv *ShardKV) handlePut(op Op, waitChResponse *WaitChResponse) {
@@ -329,7 +334,7 @@ func (kv *ShardKV) handlePut(op Op, waitChResponse *WaitChResponse) {
 
 	if op.RequestId > kv.latestAppliedRequest[op.ClientId] {
 		kv.latestAppliedRequest[op.ClientId] = op.RequestId
-		shard.Storage[op.Key] = op.Value
+		shard.Storage.Store(op.Key, op.Value)
 	}
 
 	waitChResponse.err = OK
@@ -353,11 +358,11 @@ func (kv *ShardKV) handleAppend(op Op, waitChResponse *WaitChResponse) {
 
 	if op.RequestId > kv.latestAppliedRequest[op.ClientId] {
 		kv.latestAppliedRequest[op.ClientId] = op.RequestId
-		value, keyExist := shard.Storage[op.Key]
+		value, keyExist := shard.Storage.Load(op.Key)
 		if keyExist {
-			shard.Storage[op.Key] = value + op.Value
+			shard.Storage.Store(op.Key, value.(string)+op.Value)
 		} else {
-			shard.Storage[op.Key] = op.Value
+			shard.Storage.Store(op.Key, op.Value)
 		}
 	}
 
@@ -378,7 +383,7 @@ func (kv *ShardKV) handleUpdateConfig(op Op, waitChResponse *WaitChResponse) {
 		for shardId, gid := range op.Config.Shards {
 			if gid == kv.gid {
 				kv.shards[shardId] = &Shard{
-					Storage: map[string]string{},
+					Storage: sync.Map{},
 					Status:  WORKING,
 				}
 			}
@@ -390,7 +395,7 @@ func (kv *ShardKV) handleUpdateConfig(op Op, waitChResponse *WaitChResponse) {
 				_, exist := kv.shards[shardId]
 				if !exist {
 					kv.shards[shardId] = &Shard{
-						Storage: nil,
+						Storage: sync.Map{},
 						Status:  PULLING,
 					}
 					go kv.pullShard(shardId, kv.currConfig.Num)
@@ -457,7 +462,9 @@ func (kv *ShardKV) handlePullShard(op Op, waitChResponse *WaitChResponse) {
 	}
 
 	kv.DPrintf("get shard %v from ex-owner\n", op.ShardId)
-	kv.shards[op.ShardId].Storage = op.Storage
+	for key, value := range op.Storage {
+		kv.shards[op.ShardId].Storage.Store(key, value)
+	}
 	kv.shards[op.ShardId].Status = WAITING
 	go kv.sendLeave(op.ShardId, kv.currConfig.Num)
 }

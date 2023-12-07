@@ -8,6 +8,11 @@ import (
 	"6.824/shardctrler"
 )
 
+type ShardCopy struct {
+	StorageMap map[string]string
+	Status     ShardStatus
+}
+
 func (kv *ShardKV) needSnapshot() bool {
 	return kv.maxraftstate != -1 && kv.rf.RaftStateSize() >= kv.maxraftstate
 }
@@ -23,24 +28,24 @@ func (kv *ShardKV) createSnapshot(index int) {
 	e.Encode(kv.latestAppliedRequest)
 	e.Encode(kv.prevConfig)
 	e.Encode(kv.currConfig)
-	shardCopy := kv.getShardCopy()
-	e.Encode(shardCopy)
+	e.Encode(kv.getSnapshotShard())
 
 	snapshot := w.Bytes()
 	kv.rf.Snapshot(index, snapshot)
 }
 
-func (kv *ShardKV) getShardCopy() map[int]*Shard {
-	shardCopy := make(map[int]*Shard)
+func (kv *ShardKV) getSnapshotShard() map[int]*SnapshotShard {
+	shardCopy := make(map[int]*SnapshotShard)
 	for shardId, shard := range kv.shards {
-		shardCopy[shardId] = &Shard{
-			Storage: make(map[string]string),
-			Status:  shard.Status,
+		storageMap := make(map[string]string)
+		shard.Storage.Range(func(key, value interface{}) bool {
+			storageMap[key.(string)] = value.(string)
+			return true
+		})
+		shardCopy[shardId] = &SnapshotShard{
+			StorageMap: storageMap,
+			Status:     shard.Status,
 		}
-		for k, v := range shard.Storage {
-			shardCopy[shardId].Storage[k] = v
-		}
-
 	}
 	return shardCopy
 }
@@ -62,7 +67,7 @@ func (kv *ShardKV) readSnapshot(snapshot []byte) {
 	var persistLatestAppliedRequest map[int64]int64
 	var persistPrevConfig shardctrler.Config
 	var persistCurrConfig shardctrler.Config
-	var persistShards map[int]*Shard
+	var persistShards map[int]*SnapshotShard
 
 	if d.Decode(&persistLatestAppliedRaftIndex) != nil || d.Decode(&persistLatestAppliedRequest) != nil ||
 		d.Decode(&persistPrevConfig) != nil || d.Decode(&persistCurrConfig) != nil || d.Decode(&persistShards) != nil {
@@ -72,6 +77,19 @@ func (kv *ShardKV) readSnapshot(snapshot []byte) {
 		kv.latestAppliedRequest = persistLatestAppliedRequest
 		kv.prevConfig = persistPrevConfig
 		kv.currConfig = persistCurrConfig
-		kv.shards = persistShards
+		kv.getRuntimeShard(persistShards)
+	}
+}
+
+func (kv *ShardKV) getRuntimeShard(persistShards map[int]*SnapshotShard) {
+	kv.shards = make(map[int]*Shard)
+	for shardId, snapshotShard := range persistShards {
+		newShard := &Shard{
+			Status: snapshotShard.Status,
+		}
+		for k, v := range snapshotShard.StorageMap {
+			newShard.Storage.Store(k, v)
+		}
+		kv.shards[shardId] = newShard
 	}
 }

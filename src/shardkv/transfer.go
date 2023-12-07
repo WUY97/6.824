@@ -38,9 +38,12 @@ func (kv *ShardKV) Pull(args *PullArgs, reply *PullReply) {
 				reply.Err = ErrConfigVersion
 			} else {
 				reply.Storage = map[string]string{}
-				for key, value := range shard.Storage {
-					reply.Storage[key] = value
-				}
+				shard.Storage.Range(func(key, value interface{}) bool {
+					strKey := key.(string)
+					strValue := value.(string)
+					reply.Storage[strKey] = strValue
+					return true
+				})
 				reply.Err = OK
 			}
 		}
