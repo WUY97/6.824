@@ -11,6 +11,7 @@ package shardkv
 import (
 	"crypto/rand"
 	"math/big"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -44,6 +45,7 @@ type Clerk struct {
 	// You will have to modify this struct.
 	clientId  int64
 	requestId int64
+	leaderIds sync.Map
 }
 
 // the tester calls MakeClerk.
@@ -60,6 +62,7 @@ func MakeClerk(ctrlers []*labrpc.ClientEnd, make_end func(string) *labrpc.Client
 	// You'll have to add code here.
 	ck.clientId = nrand()
 	ck.requestId = 0
+	ck.leaderIds = sync.Map{}
 	return ck
 }
 
@@ -79,24 +82,39 @@ func (ck *Clerk) Get(key string) string {
 	for {
 		shard := key2shard(key)
 		gid := ck.config.Shards[shard]
-		if servers, ok := ck.config.Groups[gid]; ok {
-			// try each server for the shard.
-			for si := 0; si < len(servers); si++ {
-				srv := ck.make_end(servers[si])
-				var reply GetReply
-				ok := srv.Call("ShardKV.Get", &args, &reply)
-				if ok && (reply.Err == OK || reply.Err == ErrNoKey) {
-					atomic.AddInt64(&ck.requestId, 1)
-					return reply.Value
-				}
-				if ok && (reply.Err == ErrWrongGroup) {
+		servers, ok := ck.config.Groups[gid]
+		if !ok {
+			time.Sleep(100 * time.Millisecond)
+			ck.config = ck.sm.Query(-1)
+			continue
+		}
+
+		var oldLeaderId int
+		if leaderIdIface, ok := ck.leaderIds.Load(gid); ok {
+			oldLeaderId = leaderIdIface.(int)
+		} else {
+			oldLeaderId = 0
+		}
+		newLeaderId := oldLeaderId
+
+		for {
+			var reply GetReply
+			ok := ck.make_end(servers[newLeaderId]).Call("ShardKV.Get", &args, &reply)
+			if ok && (reply.Err == OK || reply.Err == ErrNoKey) {
+				atomic.AddInt64(&ck.requestId, 1)
+				return reply.Value
+			} else if ok && reply.Err == ErrWrongGroup {
+				break
+			} else {
+				newLeaderId = (newLeaderId + 1) % len(servers)
+				if newLeaderId == oldLeaderId {
 					break
 				}
-				// ... not ok, or ErrWrongLeader
+				continue
 			}
 		}
+
 		time.Sleep(100 * time.Millisecond)
-		// ask controler for the latest configuration.
 		ck.config = ck.sm.Query(-1)
 	}
 }
@@ -117,23 +135,39 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 	for {
 		shard := key2shard(key)
 		gid := ck.config.Shards[shard]
-		if servers, ok := ck.config.Groups[gid]; ok {
-			for si := 0; si < len(servers); si++ {
-				srv := ck.make_end(servers[si])
-				var reply PutAppendReply
-				ok := srv.Call("ShardKV.PutAppend", &args, &reply)
-				if ok && reply.Err == OK {
-					atomic.AddInt64(&ck.requestId, 1)
-					return
-				}
-				if ok && reply.Err == ErrWrongGroup {
+		servers, ok := ck.config.Groups[gid]
+		if !ok {
+			time.Sleep(100 * time.Millisecond)
+			ck.config = ck.sm.Query(-1)
+			continue
+		}
+
+		var oldLeaderId int
+		if leaderIdIface, ok := ck.leaderIds.Load(gid); ok {
+			oldLeaderId = leaderIdIface.(int)
+		} else {
+			oldLeaderId = 0
+		}
+		newLeaderId := oldLeaderId
+
+		for {
+			var reply PutAppendReply
+			ok := ck.make_end(servers[newLeaderId]).Call("ShardKV.PutAppend", &args, &reply)
+			if ok && reply.Err == OK {
+				atomic.AddInt64(&ck.requestId, 1)
+				return
+			} else if ok && reply.Err == ErrWrongGroup {
+				break
+			} else {
+				newLeaderId = (newLeaderId + 1) % len(servers)
+				if newLeaderId == oldLeaderId {
 					break
 				}
-				// ... not ok, or ErrWrongLeader
+				continue
 			}
 		}
+
 		time.Sleep(100 * time.Millisecond)
-		// ask controler for the latest configuration.
 		ck.config = ck.sm.Query(-1)
 	}
 }
