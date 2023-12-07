@@ -16,7 +16,7 @@ const RetryPullInterval = 150 * time.Millisecond
 const RetryLeaveInterval = 160 * time.Millisecond
 const RaftTimeOut = 200 * time.Millisecond
 
-const Debug = true
+const Debug = false
 
 const (
 	OK               = "OK"
