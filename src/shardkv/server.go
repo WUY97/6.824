@@ -420,10 +420,7 @@ func (kv *ShardKV) handleUpdateConfig(op Op, waitChResponse *WaitChResponse) {
 }
 
 func (kv *ShardKV) pullShard(shardId int, configVersion int) {
-	var retries int
-	maxRetries := 5
-
-	for retries < maxRetries {
+	for {
 		kv.mu.Lock()
 		kv.DPrintf("pull shard %v, configVersion %v\n", shardId, configVersion)
 		if kv.currConfig.Num > configVersion {
@@ -440,7 +437,6 @@ func (kv *ShardKV) pullShard(shardId int, configVersion int) {
 		_, isLeader := kv.rf.GetState()
 		if !isLeader {
 			kv.DPrintf("server %v is not leader, stop pulling\n", kv.me)
-			retries++
 			kv.mu.Unlock()
 			time.Sleep(RetryPullInterval)
 			continue
@@ -475,7 +471,6 @@ func (kv *ShardKV) pullShard(shardId int, configVersion int) {
 				// ... not ok, or ErrWrongLeader
 			}
 		}
-		retries++
 		time.Sleep(RetryPullInterval)
 	}
 }
@@ -496,9 +491,7 @@ func (kv *ShardKV) handlePullShard(op Op, waitChResponse *WaitChResponse) {
 }
 
 func (kv *ShardKV) sendLeave(shardId int, configVersion int) {
-	var retries int
-	maxRetries := 5
-	for retries < maxRetries {
+	for {
 		kv.mu.Lock()
 		if kv.currConfig.Num > configVersion {
 			kv.mu.Unlock()
@@ -511,7 +504,6 @@ func (kv *ShardKV) sendLeave(shardId int, configVersion int) {
 		_, isLeader := kv.rf.GetState()
 		if !isLeader {
 			kv.mu.Unlock()
-			retries++
 			time.Sleep(RetryLeaveInterval)
 			continue
 		}
@@ -545,7 +537,6 @@ func (kv *ShardKV) sendLeave(shardId int, configVersion int) {
 				// ... not ok, or ErrWrongLeader
 			}
 		}
-		retries++
 		time.Sleep(RetryLeaveInterval)
 	}
 }
