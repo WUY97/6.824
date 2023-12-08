@@ -5,6 +5,16 @@ import (
 	"sort"
 )
 
+func (rf *Raft) HasLogInCurrentTerm() bool {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	if len(rf.log) == 0 {
+		return false
+	}
+
+	return rf.log[rf.getRelativeLastIndex()].Term == rf.currentTerm
+}
+
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()

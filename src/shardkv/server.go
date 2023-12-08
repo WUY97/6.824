@@ -19,6 +19,7 @@ const (
 	PULL_SHARD    = 4 // get data, PULLING -> WORKING
 	LEAVE_SHARD   = 5 // remove data, LEAVING -> nil
 	TRANSFER_DONE = 6 // confirm transfer done, WAITING -> WORKING
+	EMPTY_ENTRY   = 7 // empty entry to make sure log entry is in current term
 )
 
 type OpType int
@@ -230,6 +231,7 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 
 	go kv.applier()
 	go kv.fetchNextConfig()
+	go kv.checkEntryInCurrentTerm()
 
 	return kv
 }
@@ -264,6 +266,8 @@ func (kv *ShardKV) applier() {
 				kv.handleLeaveShard(op, &waitChResponse)
 			case TRANSFER_DONE:
 				kv.handleTransferDone(op, &waitChResponse)
+			case EMPTY_ENTRY:
+				kv.handleEmptyEntry(&waitChResponse)
 			}
 
 			kv.latestAppliedRaftIndex = index
@@ -380,6 +384,7 @@ func (kv *ShardKV) handleUpdateConfig(op Op, waitChResponse *WaitChResponse) {
 
 	kv.prevConfig = kv.currConfig
 	kv.currConfig = op.Config
+
 	if op.Config.Num == 1 {
 		kv.DPrintf("create first config")
 		for shardId, gid := range op.Config.Shards {
@@ -415,7 +420,10 @@ func (kv *ShardKV) handleUpdateConfig(op Op, waitChResponse *WaitChResponse) {
 }
 
 func (kv *ShardKV) pullShard(shardId int, configVersion int) {
-	for {
+	var retries int
+	maxRetries := 5
+
+	for retries < maxRetries {
 		kv.mu.Lock()
 		kv.DPrintf("pull shard %v, configVersion %v\n", shardId, configVersion)
 		if kv.currConfig.Num > configVersion {
@@ -432,6 +440,7 @@ func (kv *ShardKV) pullShard(shardId int, configVersion int) {
 		_, isLeader := kv.rf.GetState()
 		if !isLeader {
 			kv.DPrintf("server %v is not leader, stop pulling\n", kv.me)
+			retries++
 			kv.mu.Unlock()
 			time.Sleep(RetryPullInterval)
 			continue
@@ -442,19 +451,23 @@ func (kv *ShardKV) pullShard(shardId int, configVersion int) {
 			ShardId:       shardId,
 		}
 		gid := kv.prevConfig.Shards[shardId]
+		kv.mu.Unlock()
+
 		if servers, ok := kv.prevConfig.Groups[gid]; ok {
 			for si := 0; si < len(servers); si++ {
 				srv := kv.make_end(servers[si])
 				var reply PullReply
 				ok := srv.Call("ShardKV.Pull", &args, &reply)
 				if ok && (reply.Err == OK) {
+					kv.mu.Lock()
 					kv.rf.Start(Op{
 						Type:          PULL_SHARD,
 						ShardId:       shardId,
 						ConfigVersion: configVersion,
 						Storage:       reply.Storage,
 					})
-					break
+					kv.mu.Unlock()
+					return
 				}
 				if ok && (reply.Err == ErrConfigVersion) {
 					break
@@ -462,7 +475,7 @@ func (kv *ShardKV) pullShard(shardId int, configVersion int) {
 				// ... not ok, or ErrWrongLeader
 			}
 		}
-		kv.mu.Unlock()
+		retries++
 		time.Sleep(RetryPullInterval)
 	}
 }
@@ -483,7 +496,9 @@ func (kv *ShardKV) handlePullShard(op Op, waitChResponse *WaitChResponse) {
 }
 
 func (kv *ShardKV) sendLeave(shardId int, configVersion int) {
-	for {
+	var retries int
+	maxRetries := 5
+	for retries < maxRetries {
 		kv.mu.Lock()
 		if kv.currConfig.Num > configVersion {
 			kv.mu.Unlock()
@@ -496,6 +511,7 @@ func (kv *ShardKV) sendLeave(shardId int, configVersion int) {
 		_, isLeader := kv.rf.GetState()
 		if !isLeader {
 			kv.mu.Unlock()
+			retries++
 			time.Sleep(RetryLeaveInterval)
 			continue
 		}
@@ -505,6 +521,8 @@ func (kv *ShardKV) sendLeave(shardId int, configVersion int) {
 			ShardId:       shardId,
 		}
 		gid := kv.prevConfig.Shards[shardId]
+		kv.mu.Unlock()
+
 		if servers, ok := kv.prevConfig.Groups[gid]; ok {
 			// try each server for the shard.
 			for si := 0; si < len(servers); si++ {
@@ -512,12 +530,14 @@ func (kv *ShardKV) sendLeave(shardId int, configVersion int) {
 				var reply LeaveReply
 				ok := srv.Call("ShardKV.Leave", &args, &reply)
 				if ok && (reply.Err == OK) {
+					kv.mu.Lock()
 					kv.rf.Start(Op{
 						Type:          TRANSFER_DONE,
 						ShardId:       shardId,
 						ConfigVersion: configVersion,
 					})
-					break
+					kv.mu.Unlock()
+					return
 				}
 				if ok && (reply.Err == ErrConfigVersion) {
 					break
@@ -525,7 +545,7 @@ func (kv *ShardKV) sendLeave(shardId int, configVersion int) {
 				// ... not ok, or ErrWrongLeader
 			}
 		}
-		kv.mu.Unlock()
+		retries++
 		time.Sleep(RetryLeaveInterval)
 	}
 }
@@ -554,6 +574,10 @@ func (kv *ShardKV) handleTransferDone(op Op, waitChResponse *WaitChResponse) {
 		kv.DPrintf("confirm shard %v deleted from ex-owner\n", op.ShardId)
 		kv.shards[op.ShardId].Status = WORKING
 	}
+}
+
+func (kv *ShardKV) handleEmptyEntry(waitChResponse *WaitChResponse) {
+	waitChResponse.err = OK
 }
 
 func (kv *ShardKV) fetchNextConfig() {
@@ -588,5 +612,19 @@ func (kv *ShardKV) fetchNextConfig() {
 		}
 		kv.mu.Unlock()
 		time.Sleep(FetchConfigInterval)
+	}
+}
+
+func (kv *ShardKV) checkEntryInCurrentTerm() {
+	for {
+		if !kv.rf.HasLogInCurrentTerm() {
+			kv.mu.Lock()
+			// Empty Op to make sure the log entry is in current term
+			kv.rf.Start(Op{
+				Type: EMPTY_ENTRY,
+			})
+			kv.mu.Unlock()
+		}
+		time.Sleep(200 * time.Millisecond)
 	}
 }
