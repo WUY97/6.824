@@ -50,7 +50,7 @@ func (ck *Clerk) Query(num int) Config {
 	for ; ; serverId = (serverId + 1) % int32(len(ck.servers)) {
 		reply := QueryReply{}
 		ok := ck.servers[serverId].Call("ShardCtrler.Query", args, &reply)
-		if ok && !reply.WrongLeader {
+		if ok && reply.Err != ErrWrongLeader {
 			atomic.StoreInt32(&ck.leaderId, serverId)
 			return reply.Config
 		}
@@ -71,7 +71,7 @@ func (ck *Clerk) Join(servers map[int][]string) {
 	for ; ; serverId = (serverId + 1) % int32(len(ck.servers)) {
 		reply := QueryReply{}
 		ok := ck.servers[serverId].Call("ShardCtrler.Join", args, &reply)
-		if ok && !reply.WrongLeader {
+		if ok && reply.Err != ErrWrongLeader {
 			atomic.StoreInt32(&ck.leaderId, serverId)
 			return
 		}
@@ -92,7 +92,7 @@ func (ck *Clerk) Leave(gids []int) {
 	for ; ; serverId = (serverId + 1) % int32(len(ck.servers)) {
 		reply := QueryReply{}
 		ok := ck.servers[serverId].Call("ShardCtrler.Leave", args, &reply)
-		if ok && !reply.WrongLeader {
+		if ok && reply.Err != ErrWrongLeader {
 			atomic.StoreInt32(&ck.leaderId, serverId)
 			return
 		}
@@ -114,7 +114,7 @@ func (ck *Clerk) Move(shard int, gid int) {
 	for ; ; serverId = (serverId + 1) % int32(len(ck.servers)) {
 		reply := QueryReply{}
 		ok := ck.servers[serverId].Call("ShardCtrler.Move", args, &reply)
-		if ok && !reply.WrongLeader {
+		if ok && reply.Err != ErrWrongLeader {
 			atomic.StoreInt32(&ck.leaderId, serverId)
 			return
 		}

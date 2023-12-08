@@ -1,6 +1,7 @@
 package shardctrler
 
 import (
+	"log"
 	"sort"
 	"sync"
 	"time"
@@ -20,17 +21,23 @@ type ShardCtrler struct {
 
 	configs []Config // indexed by config num
 
-	latestRequestId map[int64]int64
-	waitingOps      map[int]chan Op
+	latestAppliedRequest   map[int64]int64
+	waitChs                map[int]chan WaitChResponse
+	latestAppliedRaftIndex int
+}
+
+type WaitChResponse struct {
+	err    Err
+	config Config
 }
 
 type Op struct {
 	// Your data here.
 	Type      string
-	JoinArgs  *JoinArgs
-	LeaveArgs *LeaveArgs
-	MoveArgs  *MoveArgs
-	QueryArgs *QueryArgs
+	JoinArgs  JoinArgs
+	LeaveArgs LeaveArgs
+	MoveArgs  MoveArgs
+	QueryArgs QueryArgs
 
 	ClientId  int64
 	RequestId int64
@@ -38,116 +45,108 @@ type Op struct {
 
 func (sc *ShardCtrler) Join(args *JoinArgs, reply *JoinReply) {
 	// Your code here.
-	op := Op{
-		Type:      JOIN,
-		JoinArgs:  args,
-		ClientId:  args.ClientId,
-		RequestId: args.RequestId,
+	raftIndex, _, isLeader := sc.rf.Start(Op{Type: JOIN, ClientId: args.ClientId, RequestId: args.RequestId, JoinArgs: *args})
+	if !isLeader {
+		reply.Err = ErrWrongLeader
+	} else {
+		sc.mu.Lock()
+		_, exist := sc.waitChs[raftIndex]
+		if exist {
+			log.Fatalf("shardctrler server %d try to get a existing waitCh\n", sc.me)
+		}
+		sc.waitChs[raftIndex] = make(chan WaitChResponse, 1)
+		waitCh := sc.waitChs[raftIndex]
+		sc.mu.Unlock()
+		select {
+		case <-time.After(Timeout):
+			reply.Err = ErrWrongLeader
+		case response := <-waitCh:
+			reply.Err = response.err
+		}
+		sc.mu.Lock()
+		delete(sc.waitChs, raftIndex)
+		sc.mu.Unlock()
 	}
-
-	ok, _ := sc.waitForApplied(op)
-	if !ok {
-		reply.WrongLeader = true
-		return
-	}
-
-	reply.WrongLeader = false
-	reply.Err = OK
 }
 
 func (sc *ShardCtrler) Leave(args *LeaveArgs, reply *LeaveReply) {
 	// Your code here.
-	op := Op{
-		Type:      LEAVE,
-		LeaveArgs: args,
-		ClientId:  args.ClientId,
-		RequestId: args.RequestId,
-	}
+	raftIndex, _, isLeader := sc.rf.Start(Op{Type: LEAVE, ClientId: args.ClientId, RequestId: args.RequestId, LeaveArgs: *args})
+	if !isLeader {
+		reply.Err = ErrWrongLeader
+	} else {
+		sc.mu.Lock()
+		_, exist := sc.waitChs[raftIndex]
+		if exist {
+			log.Fatalf("shardctrler server %d try to get a existing waitCh\n", sc.me)
+		}
+		sc.waitChs[raftIndex] = make(chan WaitChResponse, 1)
+		waitCh := sc.waitChs[raftIndex]
+		sc.mu.Unlock()
+		select {
+		case <-time.After(time.Millisecond * Timeout):
+			reply.Err = ErrWrongLeader
+		case response := <-waitCh:
+			reply.Err = response.err
+		}
 
-	ok, _ := sc.waitForApplied(op)
-	if !ok {
-		reply.WrongLeader = true
-		return
+		sc.mu.Lock()
+		delete(sc.waitChs, raftIndex)
+		sc.mu.Unlock()
 	}
-
-	reply.WrongLeader = false
-	reply.Err = OK
 }
 
 func (sc *ShardCtrler) Move(args *MoveArgs, reply *MoveReply) {
 	// Your code here.
-	op := Op{
-		Type:      MOVE,
-		MoveArgs:  args,
-		ClientId:  args.ClientId,
-		RequestId: args.RequestId,
+	raftIndex, _, isLeader := sc.rf.Start(Op{Type: MOVE, ClientId: args.ClientId, RequestId: args.RequestId, MoveArgs: *args})
+	if !isLeader {
+		reply.Err = ErrWrongLeader
+	} else {
+		sc.mu.Lock()
+		_, exist := sc.waitChs[raftIndex]
+		if exist {
+			log.Fatalf("shardctrler server %d try to get a existing waitCh\n", sc.me)
+		}
+		sc.waitChs[raftIndex] = make(chan WaitChResponse, 1)
+		waitCh := sc.waitChs[raftIndex]
+		sc.mu.Unlock()
+		select {
+		case <-time.After(time.Millisecond * Timeout):
+			reply.Err = ErrWrongLeader
+		case response := <-waitCh:
+			reply.Err = response.err
+		}
+		sc.mu.Lock()
+		delete(sc.waitChs, raftIndex)
+		sc.mu.Unlock()
 	}
-
-	ok, _ := sc.waitForApplied(op)
-	if !ok {
-		reply.WrongLeader = true
-		return
-	}
-
-	reply.WrongLeader = false
-	reply.Err = OK
 }
 
 func (sc *ShardCtrler) Query(args *QueryArgs, reply *QueryReply) {
 	// Your code here.
-	op := Op{
-		Type:      QUERY,
-		QueryArgs: args,
-		ClientId:  args.ClientId,
-		RequestId: args.RequestId,
-	}
-
-	ok, _ := sc.waitForApplied(op)
-	if !ok {
-		reply.WrongLeader = true
-		return
-	}
-
-	sc.mu.Lock()
-	defer sc.mu.Unlock()
-
-	reply.WrongLeader = false
-	reply.Err = OK
-	if args.Num < 0 || args.Num >= len(sc.configs) {
-		reply.Config = sc.configs[len(sc.configs)-1]
-	} else {
-		reply.Config = sc.configs[args.Num]
-	}
-}
-
-func (sc *ShardCtrler) waitForApplied(op Op) (bool, Op) {
-	index, _, isLeader := sc.rf.Start(op)
-
+	raftIndex, _, isLeader := sc.rf.Start(Op{Type: QUERY, ClientId: args.ClientId, RequestId: args.RequestId, QueryArgs: *args})
 	if !isLeader {
-		return false, op
-	}
-
-	sc.mu.Lock()
-	opCh, ok := sc.waitingOps[index]
-	if !ok {
-		opCh = make(chan Op, 1)
-		sc.waitingOps[index] = opCh
-	}
-	sc.mu.Unlock()
-
-	select {
-	case appliedOp := <-opCh:
+		reply.Err = ErrWrongLeader
+	} else {
 		sc.mu.Lock()
-		delete(sc.waitingOps, index)
+		_, exist := sc.waitChs[raftIndex]
+		if exist {
+			log.Fatalf("shardctrler server %d try to get a existing waitCh\n", sc.me)
+		}
+		sc.waitChs[raftIndex] = make(chan WaitChResponse, 1)
+		waitCh := sc.waitChs[raftIndex]
 		sc.mu.Unlock()
-		return sc.isSameOp(op, appliedOp), appliedOp
-	case <-time.After(500 * time.Millisecond):
-		return false, op
+		select {
+		case <-time.After(time.Millisecond * Timeout):
+			reply.Err = ErrWrongLeader
+		case response := <-waitCh:
+			reply.Err = response.err
+			reply.Config = response.config
+		}
+		sc.mu.Lock()
+		delete(sc.waitChs, raftIndex)
+		sc.mu.Unlock()
 	}
-}
-
-func (sc *ShardCtrler) isSameOp(issued Op, applied Op) bool {
-	return issued.ClientId == applied.ClientId && issued.RequestId == applied.RequestId
 }
 
 // the tester calls Kill() when a ShardCtrler instance won't
@@ -180,8 +179,9 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister)
 	sc.rf = raft.Make(servers, me, persister, sc.applyCh)
 
 	// Your code here.
-	sc.latestRequestId = make(map[int64]int64)
-	sc.waitingOps = make(map[int]chan Op)
+	sc.latestAppliedRequest = make(map[int64]int64)
+	sc.waitChs = make(map[int]chan WaitChResponse)
+	sc.latestAppliedRaftIndex = 0
 
 	go sc.applier()
 
@@ -194,54 +194,79 @@ func (sc *ShardCtrler) applier() {
 			continue
 		}
 
-		sc.mu.Lock()
 		index := msg.CommandIndex
+
+		if index <= sc.latestAppliedRaftIndex {
+			continue
+		}
+
 		op := msg.Command.(Op)
+		waitChResponse := WaitChResponse{}
 
-		if op.Type == QUERY {
-			sc.applyOp(&op)
-		} else {
-			lastId, ok := sc.latestRequestId[op.ClientId]
-			if !ok || op.RequestId > lastId {
-				sc.applyOp(&op)
-				sc.latestRequestId[op.ClientId] = op.RequestId
+		duplicated := true
+		lastId, ok := sc.latestAppliedRequest[op.ClientId]
+		if !ok || lastId < op.RequestId {
+			duplicated = false
+			sc.latestAppliedRequest[op.ClientId] = op.RequestId
+		}
+
+		switch op.Type {
+		case JOIN:
+			if duplicated {
+				waitChResponse.err = OK
+			} else {
+				sc.applyJoin(op.JoinArgs, &waitChResponse)
 			}
+		case LEAVE:
+			if duplicated {
+				waitChResponse.err = OK
+			} else {
+				sc.applyLeave(op.LeaveArgs, &waitChResponse)
+			}
+		case MOVE:
+			if duplicated {
+				waitChResponse.err = OK
+			} else {
+				sc.applyMove(op.MoveArgs, &waitChResponse)
+			}
+		case QUERY:
+			sc.applyQuery(op.QueryArgs, &waitChResponse)
 		}
 
-		ch, ok := sc.waitingOps[index]
-		if !ok {
-			ch = make(chan Op, 1)
-			sc.waitingOps[index] = ch
-		}
-		ch <- op
+		sc.mu.Lock()
+		sc.latestAppliedRaftIndex = index
+		waitCh, exist := sc.waitChs[index]
 		sc.mu.Unlock()
+		if exist {
+			waitCh <- waitChResponse
+		}
 	}
 }
 
-func (sc *ShardCtrler) applyOp(op *Op) {
-	switch op.Type {
-	case JOIN:
-		sc.applyJoin(op.JoinArgs)
-	case LEAVE:
-		sc.applyLeave(op.LeaveArgs)
-	case MOVE:
-		sc.applyMove(op.MoveArgs)
-	case QUERY:
-	default:
-	}
-}
-
-func (sc *ShardCtrler) applyJoin(args *JoinArgs) {
+func (sc *ShardCtrler) applyJoin(args JoinArgs, waitChResponse *WaitChResponse) {
 	newConfig := sc.createNewConfig()
+
 	for gid, servers := range args.Servers {
 		newConfig.Groups[gid] = servers
 	}
 
+	newGroups := false
+	for gid := range args.Servers {
+		if _, ok := sc.configs[len(sc.configs)-1].Groups[gid]; !ok {
+			newGroups = true
+			break
+		}
+	}
+	if !newGroups {
+		return
+	}
+
 	sc.rebalanceShards(&newConfig)
 	sc.configs = append(sc.configs, newConfig)
+	waitChResponse.err = OK
 }
 
-func (sc *ShardCtrler) applyLeave(args *LeaveArgs) {
+func (sc *ShardCtrler) applyLeave(args LeaveArgs, waitChResponse *WaitChResponse) {
 	newConfig := sc.createNewConfig()
 	for _, gid := range args.GIDs {
 		delete(newConfig.Groups, gid)
@@ -249,13 +274,25 @@ func (sc *ShardCtrler) applyLeave(args *LeaveArgs) {
 
 	sc.rebalanceShards(&newConfig)
 	sc.configs = append(sc.configs, newConfig)
+	waitChResponse.err = OK
+
 }
 
-func (sc *ShardCtrler) applyMove(args *MoveArgs) {
+func (sc *ShardCtrler) applyMove(args MoveArgs, waitChResponse *WaitChResponse) {
 	newConfig := sc.createNewConfig()
 	newConfig.Shards[args.Shard] = args.GID
 
 	sc.configs = append(sc.configs, newConfig)
+	waitChResponse.err = OK
+}
+
+func (sc *ShardCtrler) applyQuery(args QueryArgs, waitChResponse *WaitChResponse) {
+	if args.Num < 0 || args.Num >= len(sc.configs)-1 {
+		waitChResponse.config = sc.configs[len(sc.configs)-1]
+	} else {
+		waitChResponse.config = sc.configs[args.Num]
+	}
+	waitChResponse.err = OK
 }
 
 func (sc *ShardCtrler) createNewConfig() Config {

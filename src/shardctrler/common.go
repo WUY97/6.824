@@ -1,5 +1,7 @@
 package shardctrler
 
+import "time"
+
 //
 // Shard controler: assigns shards to replication groups.
 //
@@ -20,6 +22,8 @@ package shardctrler
 // The number of shards.
 const NShards = 10
 
+const Timeout = 200 * time.Millisecond
+
 // A configuration -- an assignment of shards to groups.
 // Please don't change this.
 type Config struct {
@@ -29,7 +33,11 @@ type Config struct {
 }
 
 const (
-	OK = "OK"
+	OK               = "OK"
+	ErrNoKey         = "ErrNoKey"
+	ErrWrongGroup    = "ErrWrongGroup"
+	ErrWrongLeader   = "ErrWrongLeader"
+	ErrConfigVersion = "ErrConfigVersion"
 )
 
 type Err string
@@ -41,8 +49,7 @@ type JoinArgs struct {
 }
 
 type JoinReply struct {
-	WrongLeader bool
-	Err         Err
+	Err Err
 }
 
 type LeaveArgs struct {
@@ -52,8 +59,7 @@ type LeaveArgs struct {
 }
 
 type LeaveReply struct {
-	WrongLeader bool
-	Err         Err
+	Err Err
 }
 
 type MoveArgs struct {
@@ -64,8 +70,7 @@ type MoveArgs struct {
 }
 
 type MoveReply struct {
-	WrongLeader bool
-	Err         Err
+	Err Err
 }
 
 type QueryArgs struct {
@@ -75,9 +80,8 @@ type QueryArgs struct {
 }
 
 type QueryReply struct {
-	WrongLeader bool
-	Err         Err
-	Config      Config
+	Err    Err
+	Config Config
 }
 
 const (
