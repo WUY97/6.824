@@ -62,7 +62,7 @@ type ShardKV struct {
 }
 
 type Shard struct {
-	Storage sync.Map
+	Storage map[string]string
 	Status  ShardStatus
 }
 
@@ -312,14 +312,14 @@ func (kv *ShardKV) handleGet(op Op, waitChResponse *WaitChResponse) {
 		kv.latestAppliedRequest[op.ClientId] = op.RequestId
 	}
 
-	value, keyExist := shard.Storage.Load(op.Key)
+	value, keyExist := shard.Storage[op.Key]
 	if !keyExist {
 		waitChResponse.err = ErrNoKey
 		return
 	}
 
 	waitChResponse.err = OK
-	waitChResponse.value = value.(string)
+	waitChResponse.value = value
 }
 
 func (kv *ShardKV) handlePut(op Op, waitChResponse *WaitChResponse) {
@@ -340,7 +340,7 @@ func (kv *ShardKV) handlePut(op Op, waitChResponse *WaitChResponse) {
 
 	if op.RequestId > kv.latestAppliedRequest[op.ClientId] {
 		kv.latestAppliedRequest[op.ClientId] = op.RequestId
-		shard.Storage.Store(op.Key, op.Value)
+		shard.Storage[op.Key] = op.Value
 	}
 
 	waitChResponse.err = OK
@@ -364,11 +364,11 @@ func (kv *ShardKV) handleAppend(op Op, waitChResponse *WaitChResponse) {
 
 	if op.RequestId > kv.latestAppliedRequest[op.ClientId] {
 		kv.latestAppliedRequest[op.ClientId] = op.RequestId
-		value, keyExist := shard.Storage.Load(op.Key)
+		_, keyExist := shard.Storage[op.Key]
 		if keyExist {
-			shard.Storage.Store(op.Key, value.(string)+op.Value)
+			shard.Storage[op.Key] += op.Value
 		} else {
-			shard.Storage.Store(op.Key, op.Value)
+			shard.Storage[op.Key] = op.Value
 		}
 	}
 
@@ -390,7 +390,7 @@ func (kv *ShardKV) handleUpdateConfig(op Op, waitChResponse *WaitChResponse) {
 		for shardId, gid := range op.Config.Shards {
 			if gid == kv.gid {
 				kv.shards[shardId] = &Shard{
-					Storage: sync.Map{},
+					Storage: map[string]string{},
 					Status:  WORKING,
 				}
 			}
@@ -403,7 +403,7 @@ func (kv *ShardKV) handleUpdateConfig(op Op, waitChResponse *WaitChResponse) {
 				kv.DPrintf("shard %v exist: %v\n", shardId, exist)
 				if !exist {
 					kv.shards[shardId] = &Shard{
-						Storage: sync.Map{},
+						Storage: map[string]string{},
 						Status:  PULLING,
 					}
 					go kv.pullShard(shardId, kv.currConfig.Num)
@@ -426,12 +426,12 @@ func (kv *ShardKV) pullShard(shardId int, configVersion int) {
 		if kv.currConfig.Num > configVersion {
 			kv.DPrintf("config version %v > %v, stop pulling\n", kv.currConfig.Num, configVersion)
 			kv.mu.RUnlock()
-			break
+			return
 		}
 		if kv.shards[shardId].Status != PULLING {
 			kv.DPrintf("shard %v status is not PULLING, stop pulling\n", shardId)
 			kv.mu.RUnlock()
-			break
+			return
 		}
 
 		_, isLeader := kv.rf.GetState()
@@ -484,7 +484,7 @@ func (kv *ShardKV) handlePullShard(op Op, waitChResponse *WaitChResponse) {
 
 	kv.DPrintf("get shard %v from ex-owner\n", op.ShardId)
 	for k, v := range op.Storage {
-		kv.shards[op.ShardId].Storage.Store(k, v)
+		kv.shards[op.ShardId].Storage[k] = v
 	}
 	kv.shards[op.ShardId].Status = WAITING
 	go kv.sendLeave(op.ShardId, kv.currConfig.Num)

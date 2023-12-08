@@ -3,7 +3,6 @@ package shardkv
 import (
 	"bytes"
 	"log"
-	"sync"
 
 	"6.824/labgob"
 	"6.824/shardctrler"
@@ -30,28 +29,12 @@ func (kv *ShardKV) createSnapshot(index int) {
 	e.Encode(kv.latestAppliedRequest)
 	e.Encode(kv.prevConfig)
 	e.Encode(kv.currConfig)
-	e.Encode(kv.getSnapshotShard())
+	e.Encode(kv.shards)
 
 	snapshot := w.Bytes()
 	kv.rf.Snapshot(index, snapshot)
 	_, isLeader := kv.rf.GetState()
 	kv.DPrintf("server %d create snapshot, isLeader: %v\n", kv.me, isLeader)
-}
-
-func (kv *ShardKV) getSnapshotShard() map[int]*SnapshotShard {
-	shardCopy := make(map[int]*SnapshotShard)
-	for shardId, shard := range kv.shards {
-		snapshotStorage := make(map[string]string)
-		shard.Storage.Range(func(key, value interface{}) bool {
-			snapshotStorage[key.(string)] = value.(string)
-			return true
-		})
-		shardCopy[shardId] = &SnapshotShard{
-			StorageMap: snapshotStorage,
-			Status:     shard.Status,
-		}
-	}
-	return shardCopy
 }
 
 func (kv *ShardKV) readSnapshot(snapshot []byte) {
@@ -71,7 +54,7 @@ func (kv *ShardKV) readSnapshot(snapshot []byte) {
 	var persistLatestAppliedRequest map[int64]int64
 	var persistPrevConfig shardctrler.Config
 	var persistCurrConfig shardctrler.Config
-	var persistShards map[int]*SnapshotShard
+	var persistShards map[int]*Shard
 
 	if d.Decode(&persistLatestAppliedRaftIndex) != nil || d.Decode(&persistLatestAppliedRequest) != nil ||
 		d.Decode(&persistPrevConfig) != nil || d.Decode(&persistCurrConfig) != nil || d.Decode(&persistShards) != nil {
@@ -81,22 +64,8 @@ func (kv *ShardKV) readSnapshot(snapshot []byte) {
 		kv.latestAppliedRequest = persistLatestAppliedRequest
 		kv.prevConfig = persistPrevConfig
 		kv.currConfig = persistCurrConfig
-		kv.getRuntimeShard(persistShards)
+		kv.shards = persistShards
 		_, isLeader := kv.rf.GetState()
 		kv.DPrintf("server %d recover from persister, isLeader: %v\n", kv.me, isLeader)
-	}
-}
-
-func (kv *ShardKV) getRuntimeShard(persistShards map[int]*SnapshotShard) {
-	kv.shards = make(map[int]*Shard)
-	for shardId, snapshotShard := range persistShards {
-		newShard := &Shard{
-			Storage: sync.Map{},
-			Status:  snapshotShard.Status,
-		}
-		for k, v := range snapshotShard.StorageMap {
-			newShard.Storage.Store(k, v)
-		}
-		kv.shards[shardId] = newShard
 	}
 }
