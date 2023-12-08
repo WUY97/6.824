@@ -102,6 +102,7 @@ func (ck *Clerk) Get(key string) string {
 			ok := ck.make_end(servers[newLeaderId]).Call("ShardKV.Get", &args, &reply)
 			if ok && (reply.Err == OK || reply.Err == ErrNoKey) {
 				atomic.AddInt64(&ck.requestId, 1)
+				ck.leaderIds.Store(gid, newLeaderId)
 				return reply.Value
 			} else if ok && reply.Err == ErrWrongGroup {
 				break
@@ -155,6 +156,7 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 			ok := ck.make_end(servers[newLeaderId]).Call("ShardKV.PutAppend", &args, &reply)
 			if ok && reply.Err == OK {
 				atomic.AddInt64(&ck.requestId, 1)
+				ck.leaderIds.Store(gid, newLeaderId)
 				return
 			} else if ok && reply.Err == ErrWrongGroup {
 				break

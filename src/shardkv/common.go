@@ -14,8 +14,8 @@ import (
 //
 
 const FetchConfigInterval = 100 * time.Millisecond
-const RetryPullInterval = 130 * time.Millisecond // cannot smaller than 125ms
-const RetryLeaveInterval = 50 * time.Millisecond
+const RetryPullInterval = 100 * time.Millisecond // cannot smaller than 125ms
+const RetryLeaveInterval = 100 * time.Millisecond
 const RaftTimeOut = 500 * time.Millisecond
 
 const Debug = false
