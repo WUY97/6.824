@@ -227,7 +227,9 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	kv.applyCh = make(chan raft.ApplyMsg)
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 
-	kv.readSnapshot(persister.ReadSnapshot())
+	if kv.maxraftstate != -1 {
+		kv.readSnapshot(persister.ReadSnapshot())
+	}
 
 	go kv.applier()
 	go kv.fetchNextConfig()
@@ -428,7 +430,14 @@ func (kv *ShardKV) pullShard(shardId int, configVersion int) {
 			kv.mu.RUnlock()
 			return
 		}
-		if kv.shards[shardId].Status != PULLING {
+
+		shard, exist := kv.shards[shardId]
+		if !exist {
+			kv.DPrintf("shard %v not exist, stop pulling\n", shardId)
+			kv.mu.RUnlock()
+			return
+		}
+		if shard.Status != PULLING {
 			kv.DPrintf("shard %v status is not PULLING, stop pulling\n", shardId)
 			kv.mu.RUnlock()
 			return
@@ -442,34 +451,36 @@ func (kv *ShardKV) pullShard(shardId int, configVersion int) {
 			continue
 		}
 
+		gid := kv.prevConfig.Shards[shardId]
+		servers, ok := kv.prevConfig.Groups[gid]
+		if !ok {
+			kv.mu.RUnlock()
+			time.Sleep(RetryPullInterval)
+			continue
+		}
+		kv.mu.RUnlock()
+
 		args := PullArgs{
 			ConfigVersion: configVersion,
 			ShardId:       shardId,
 		}
-		gid := kv.prevConfig.Shards[shardId]
-		kv.mu.RUnlock()
-
-		if servers, ok := kv.prevConfig.Groups[gid]; ok {
-			for si := 0; si < len(servers); si++ {
-				srv := kv.make_end(servers[si])
-				var reply PullReply
-				ok := srv.Call("ShardKV.Pull", &args, &reply)
-				if ok && (reply.Err == OK) {
-					kv.mu.Lock()
-					kv.rf.Start(Op{
-						Type:          PULL_SHARD,
-						ShardId:       shardId,
-						ConfigVersion: configVersion,
-						Storage:       reply.Storage,
-					})
-					kv.mu.Unlock()
-					return
-				}
-				if ok && (reply.Err == ErrConfigVersion) {
-					break
-				}
-				// ... not ok, or ErrWrongLeader
+		for si := 0; si < len(servers); si++ {
+			srv := kv.make_end(servers[si])
+			var reply PullReply
+			ok := srv.Call("ShardKV.Pull", &args, &reply)
+			if ok && (reply.Err == OK) {
+				kv.rf.Start(Op{
+					Type:          PULL_SHARD,
+					ShardId:       shardId,
+					ConfigVersion: configVersion,
+					Storage:       reply.Storage,
+				})
+				return
 			}
+			if ok && (reply.Err == ErrConfigVersion) {
+				break
+			}
+			// ... not ok, or ErrWrongLeader
 		}
 		time.Sleep(RetryPullInterval)
 	}
@@ -497,10 +508,18 @@ func (kv *ShardKV) sendLeave(shardId int, configVersion int) {
 			kv.mu.RUnlock()
 			break
 		}
-		if kv.shards[shardId].Status != WAITING {
+
+		shard, exist := kv.shards[shardId]
+		if !exist {
+			kv.DPrintf("shard %v not exist\n", shardId)
 			kv.mu.RUnlock()
 			break
 		}
+		if shard.Status != WAITING {
+			kv.mu.RUnlock()
+			break
+		}
+
 		_, isLeader := kv.rf.GetState()
 		if !isLeader {
 			kv.mu.RUnlock()
@@ -508,34 +527,36 @@ func (kv *ShardKV) sendLeave(shardId int, configVersion int) {
 			continue
 		}
 
+		gid := kv.prevConfig.Shards[shardId]
+		servers, ok := kv.prevConfig.Groups[gid]
+		if !ok {
+			kv.mu.RUnlock()
+			time.Sleep(RetryLeaveInterval)
+			continue
+		}
+		kv.mu.RUnlock()
+
 		args := LeaveArgs{
 			ConfigVersion: configVersion,
 			ShardId:       shardId,
 		}
-		gid := kv.prevConfig.Shards[shardId]
-		kv.mu.RUnlock()
-
-		if servers, ok := kv.prevConfig.Groups[gid]; ok {
-			// try each server for the shard.
-			for si := 0; si < len(servers); si++ {
-				srv := kv.make_end(servers[si])
-				var reply LeaveReply
-				ok := srv.Call("ShardKV.Leave", &args, &reply)
-				if ok && (reply.Err == OK) {
-					kv.mu.Lock()
-					kv.rf.Start(Op{
-						Type:          TRANSFER_DONE,
-						ShardId:       shardId,
-						ConfigVersion: configVersion,
-					})
-					kv.mu.Unlock()
-					return
-				}
-				if ok && (reply.Err == ErrConfigVersion) {
-					break
-				}
-				// ... not ok, or ErrWrongLeader
+		// try each server for the shard.
+		for si := 0; si < len(servers); si++ {
+			srv := kv.make_end(servers[si])
+			var reply LeaveReply
+			ok := srv.Call("ShardKV.Leave", &args, &reply)
+			if ok && (reply.Err == OK) {
+				kv.rf.Start(Op{
+					Type:          TRANSFER_DONE,
+					ShardId:       shardId,
+					ConfigVersion: configVersion,
+				})
+				return
 			}
+			if ok && (reply.Err == ErrConfigVersion) {
+				break
+			}
+			// ... not ok, or ErrWrongLeader
 		}
 		time.Sleep(RetryLeaveInterval)
 	}
@@ -561,6 +582,12 @@ func (kv *ShardKV) handleLeaveShard(op Op, waitChResponse *WaitChResponse) {
 func (kv *ShardKV) handleTransferDone(op Op, waitChResponse *WaitChResponse) {
 	kv.mu.Lock()
 	defer kv.mu.Unlock()
+	_, ok := kv.shards[op.ShardId]
+	if !ok {
+		kv.DPrintf("shard %v not exist\n", op.ShardId)
+		return
+	}
+
 	if kv.currConfig.Num == op.ConfigVersion && kv.shards[op.ShardId].Status == WAITING {
 		kv.DPrintf("confirm shard %v deleted from ex-owner\n", op.ShardId)
 		kv.shards[op.ShardId].Status = WORKING

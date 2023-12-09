@@ -8,11 +8,6 @@ import (
 	"6.824/shardctrler"
 )
 
-type ShardCopy struct {
-	StorageMap map[string]string
-	Status     ShardStatus
-}
-
 func (kv *ShardKV) needSnapshot() bool {
 	return kv.maxraftstate != -1 && kv.rf.RaftStateSize() >= kv.maxraftstate
 }
