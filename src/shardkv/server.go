@@ -305,14 +305,7 @@ func (kv *ShardKV) handleGet(op Op, waitChResponse *WaitChResponse) {
 		return
 	}
 
-	_, exist := kv.latestAppliedRequest[op.ClientId]
-	if !exist {
-		kv.latestAppliedRequest[op.ClientId] = -1
-	}
-
-	if op.RequestId > kv.latestAppliedRequest[op.ClientId] {
-		kv.latestAppliedRequest[op.ClientId] = op.RequestId
-	}
+	kv.latestAppliedRequest[op.ClientId] = op.RequestId
 
 	value, keyExist := shard.Storage[op.Key]
 	if !keyExist {
@@ -335,12 +328,8 @@ func (kv *ShardKV) handlePut(op Op, waitChResponse *WaitChResponse) {
 		return
 	}
 
-	_, exist := kv.latestAppliedRequest[op.ClientId]
-	if !exist {
-		kv.latestAppliedRequest[op.ClientId] = -1
-	}
-
-	if op.RequestId > kv.latestAppliedRequest[op.ClientId] {
+	lastApplied, exist := kv.latestAppliedRequest[op.ClientId]
+	if !exist || op.RequestId > lastApplied {
 		kv.latestAppliedRequest[op.ClientId] = op.RequestId
 		shard.Storage[op.Key] = op.Value
 	}
@@ -359,12 +348,8 @@ func (kv *ShardKV) handleAppend(op Op, waitChResponse *WaitChResponse) {
 		return
 	}
 
-	_, exist := kv.latestAppliedRequest[op.ClientId]
-	if !exist {
-		kv.latestAppliedRequest[op.ClientId] = -1
-	}
-
-	if op.RequestId > kv.latestAppliedRequest[op.ClientId] {
+	lastApplied, exist := kv.latestAppliedRequest[op.ClientId]
+	if !exist || op.RequestId > lastApplied {
 		kv.latestAppliedRequest[op.ClientId] = op.RequestId
 		_, keyExist := shard.Storage[op.Key]
 		if keyExist {

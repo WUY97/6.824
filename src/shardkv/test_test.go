@@ -25,7 +25,7 @@ func check(t *testing.T, ck *Clerk, key string, value string) {
 
 func runTestWithTimeout(t *testing.T, testFunc func()) {
 	done := make(chan bool)
-	timeout := 1 * time.Minute
+	timeout := 90 * time.Second
 
 	go func() {
 		testFunc()
